@@ -2,8 +2,9 @@ import threading
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from backtester.models import Strategy, BacktestRun, Trade
-from backtester.serializers import StrategySerializer, BacktestRunSerializer, TradeSerializer
+from backtester.models import Strategy, BacktestRun, Trade, OptimizationJob
+from backtester.serializers import StrategySerializer, BacktestRunSerializer, TradeSerializer, OptimizationJobSerializer
+from backtester.optimizer import run_optimization
 from backtester.engine import run_backtest
 from backtester.progress import get_progress
 from backtester.metrics import calculate_metrics
@@ -60,7 +61,22 @@ class EquityCurveView(APIView):
         if not run:
             return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        result = calculate_metrics(run)
-        if result is None:
-            return Response({"equity_curve": []})
-        return Response({"equity_curve": result['equity_curve']})
+        return Response({"equity_curve": run.equity_curve or []})
+
+class OptimizationJobListCreateView(generics.ListCreateAPIView):
+    queryset = OptimizationJob.objects.all().order_by('-created_at')
+    serializer_class = OptimizationJobSerializer
+
+    def perform_create(self, serializer):
+        job = serializer.save()
+        code_file_path = f"strategy_code_opt_{job.id}.py"
+        with open(code_file_path, 'w') as f:
+            f.write(job.strategy.code)
+
+        thread = threading.Thread(target=run_optimization, args=(job.id, code_file_path))
+        thread.start()
+
+
+class OptimizationJobDetailView(generics.RetrieveAPIView):
+    queryset = OptimizationJob.objects.all()
+    serializer_class = OptimizationJobSerializer

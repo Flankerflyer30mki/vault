@@ -92,6 +92,7 @@ def calculate_metrics(run):
     run.max_drawdown = max_dd
     run.sharpe_ratio = sharpe
     run.win_rate = win_rate
+    run.equity_curve = equity_curve
     run.save()
 
     return {

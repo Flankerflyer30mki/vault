@@ -8,4 +8,6 @@ urlpatterns = [
     path('runs/<int:run_id>/trades/', views.TradeListView.as_view()),
     path('runs/<int:run_id>/progress/', views.ProgressView.as_view()),
     path('runs/<int:run_id>/equity-curve/', views.EquityCurveView.as_view()),
+    path('optimizations/', views.OptimizationJobListCreateView.as_view()),
+    path('optimizations/<int:pk>/', views.OptimizationJobDetailView.as_view()),
 ]

@@ -54,6 +54,7 @@ class BacktestRun(models.Model):
     slippage_pct = models.FloatField(default=0.0005)     # 0.05% adverse price movement per trade
     stop_loss_pct = models.FloatField(null=True, blank=True)    # e.g. 0.05 = sell if down 5% from entry
     take_profit_pct = models.FloatField(null=True, blank=True)  # e.g. 0.10 = sell if up 10% from entry
+    equity_curve = models.JSONField(null=True, blank=True)
     def __str__(self):
         return f"Run {self.id} - {self.symbol} ({self.status})"
 
@@ -69,3 +70,23 @@ class Trade(models.Model):
 
     def __str__(self):
         return f"{self.side} {self.quantity} @ {self.price} ({self.ts.date()})"
+
+class OptimizationJob(models.Model):
+    strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name='optimization_jobs')
+    symbol = models.CharField(max_length=10)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    starting_cash = models.DecimalField(max_digits=14, decimal_places=2, default=10000)
+
+    # Parameter grids, stored as JSON lists — e.g. [0.05, 0.08, 0.10]
+    stop_loss_options = models.JSONField(default=list)
+    take_profit_options = models.JSONField(default=list)
+
+    status = models.CharField(max_length=20, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    runs = models.ManyToManyField(BacktestRun, related_name='optimization_jobs', blank=True)
+
+    def __str__(self):
+        return f"Optimization {self.id} - {self.symbol}"
