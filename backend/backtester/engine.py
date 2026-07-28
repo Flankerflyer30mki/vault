@@ -145,7 +145,11 @@ def run_backtest(run_id, code_file_path):
 
         calculate_metrics(run)
         clear_progress(run.id)
-
+    except Exception as e:
+        run.status = 'failed'
+        run.error_message = f"Unexpected engine error: {str(e)}"
+        run.save()
+        clear_progress(run.id)
     finally:
         process.stdin.close()
         process.terminate()

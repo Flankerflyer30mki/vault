@@ -51,6 +51,8 @@ class ProgressView(APIView):
             run = BacktestRun.objects.filter(id=run_id).first()
             if run and run.status == 'completed':
                 return Response({"processed": run.bars_processed, "total": run.bars_processed, "done": True})
+            if run and run.status == 'failed':
+                return Response({"processed": 0, "total": 0, "done": True, "error": run.error_message})
             return Response({"processed": 0, "total": 0, "done": False})
         return Response({**progress, "done": False})
 

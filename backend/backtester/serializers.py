@@ -31,6 +31,16 @@ class BacktestRunSerializer(serializers.ModelSerializer):
             'status', 'error_message', 'completed_at', 'final_value', 'cagr',
             'sharpe_ratio', 'max_drawdown', 'win_rate', 'execution_time_ms', 'bars_processed','equity_curve'
         ]
+    def validate(self, data):
+        if data['end_date'] <= data['start_date']:
+            raise serializers.ValidationError("end_date must be after start_date")
+
+        from backtester.models import Bar
+        bar_exists = Bar.objects.filter(symbol=data['symbol']).exists()
+        if not bar_exists:
+            raise serializers.ValidationError(f"No data available for symbol '{data['symbol']}'")
+
+        return data
 
 class OptimizationJobSerializer(serializers.ModelSerializer):
     strategy_name = serializers.CharField(source='strategy.name', read_only=True)
