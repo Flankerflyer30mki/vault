@@ -1,4 +1,5 @@
 import threading
+import os
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -22,7 +23,8 @@ class BacktestRunListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         run = serializer.save()
         # Save the strategy's code to a temp file for the sandbox subprocess to read
-        code_file_path = f"strategy_code_run_{run.id}.py"
+        os.makedirs('strategy_temp', exist_ok=True)
+        code_file_path = f"strategy_temp/strategy_code_run_{run.id}.py"
         with open(code_file_path, 'w') as f:
             f.write(run.strategy.code)
 
@@ -71,7 +73,8 @@ class OptimizationJobListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         job = serializer.save()
-        code_file_path = f"strategy_code_opt_{job.id}.py"
+        os.makedirs('strategy_temp', exist_ok=True)
+        code_file_path = f"strategy_temp/strategy_code_opt_{job.id}.py"
         with open(code_file_path, 'w') as f:
             f.write(job.strategy.code)
 

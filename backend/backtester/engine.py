@@ -154,3 +154,6 @@ def run_backtest(run_id, code_file_path):
         process.stdin.close()
         process.terminate()
         consumer.close()
+        import os
+        if os.path.exists(code_file_path):
+            os.remove(code_file_path)
