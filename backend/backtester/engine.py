@@ -1,11 +1,13 @@
 import json
 import subprocess
 import sys
+import time
 from decimal import Decimal
 from django.utils import timezone
 from kafka import KafkaConsumer
 from backtester.models import BacktestRun, Trade
 from backtester.kafka_producer import publish_run_bars
+from backtester.metrics import calculate_metrics
 
 
 def run_backtest(run_id, code_file_path):
@@ -13,10 +15,14 @@ def run_backtest(run_id, code_file_path):
     run.status = 'running'
     run.save()
 
+    start_time = time.time()
+    processed = 0
+
     cash = Decimal(run.starting_cash)
     shares_held = Decimal('0')
     last_price = None
     last_ts = None
+    entry_price = None
 
     # Publish this run's bars to its own Kafka topic
     topic_name = publish_run_bars(run)
@@ -65,26 +71,64 @@ def run_backtest(run_id, code_file_path):
             last_price = price
             last_ts = ts
 
+            if shares_held > 0 and entry_price:
+                change_pct = float((price - entry_price) / entry_price)
+                if run.stop_loss_pct and change_pct <= -run.stop_loss_pct:
+                    decision = 'SELL'
+                elif run.take_profit_pct and change_pct >= run.take_profit_pct:
+                    decision = 'SELL'
+
             if decision == 'BUY' and shares_held == 0 and cash > 0:
-                shares_held = cash / price
-                Trade.objects.create(run=run, side='BUY', ts=ts, price=price, quantity=shares_held)
-                cash = Decimal('0')
+                slippage = Decimal(str(run.slippage_pct))
+                commission = Decimal(str(run.commission_pct))
+                fill_price = price * (Decimal('1') + slippage)
+
+                max_allowed = cash * Decimal(str(run.max_position_pct))
+                shares_held = max_allowed / fill_price
+                cost = shares_held * fill_price
+                fee = cost * commission
+                total_spent = cost + fee
+
+                Trade.objects.create(run=run, side='BUY', ts=ts, price=fill_price, quantity=shares_held)
+                cash = cash - total_spent
+                entry_price = fill_price
 
             elif decision == 'SELL' and shares_held > 0:
-                cash = shares_held * price
-                Trade.objects.create(run=run, side='SELL', ts=ts, price=price, quantity=shares_held)
-                shares_held = Decimal('0')
+                slippage = Decimal(str(run.slippage_pct))
+                commission = Decimal(str(run.commission_pct))
+                fill_price = price * (Decimal('1') - slippage)  # receive slightly less than quoted close
 
+                proceeds = shares_held * fill_price
+                fee = proceeds * commission
+                net_proceeds = proceeds - fee
+
+                Trade.objects.create(run=run, side='SELL', ts=ts, price=fill_price, quantity=shares_held)
+                cash = net_proceeds
+                shares_held = Decimal('0')
+                entry_price = None
+
+            processed += 1
+        # Close out any open position at the last known price
         # Close out any open position at the last known price
         if shares_held > 0 and last_price:
-            cash = shares_held * last_price
-            Trade.objects.create(run=run, side='SELL', ts=last_ts, price=last_price, quantity=shares_held)
+            slippage = Decimal(str(run.slippage_pct))
+            commission = Decimal(str(run.commission_pct))
+            fill_price = last_price * (Decimal('1') - slippage)
+            proceeds = shares_held * fill_price
+            fee = proceeds * commission
+            cash = proceeds - fee
+            Trade.objects.create(run=run, side='SELL', ts=last_ts, price=fill_price, quantity=shares_held)
             shares_held = Decimal('0')
+            entry_price = None
 
+        run.execution_time_ms = int((time.time() - start_time) * 1000)
+        run.bars_processed = processed
         run.final_value = cash
         run.status = 'completed'
         run.completed_at = timezone.now()
         run.save()
+
+        calculate_metrics(run)
 
     finally:
         process.stdin.close()

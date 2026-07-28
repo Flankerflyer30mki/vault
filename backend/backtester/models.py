@@ -47,7 +47,13 @@ class BacktestRun(models.Model):
     sharpe_ratio = models.FloatField(null=True, blank=True)
     max_drawdown = models.FloatField(null=True, blank=True)
     win_rate = models.FloatField(null=True, blank=True)
-
+    execution_time_ms = models.IntegerField(null=True, blank=True)
+    bars_processed = models.IntegerField(null=True, blank=True)
+    max_position_pct = models.FloatField(default=1.0)  # 1.0 = 100% of cash allowed per trade
+    commission_pct = models.FloatField(default=0.001)   # 0.1% per trade
+    slippage_pct = models.FloatField(default=0.0005)     # 0.05% adverse price movement per trade
+    stop_loss_pct = models.FloatField(null=True, blank=True)    # e.g. 0.05 = sell if down 5% from entry
+    take_profit_pct = models.FloatField(null=True, blank=True)  # e.g. 0.10 = sell if up 10% from entry
     def __str__(self):
         return f"Run {self.id} - {self.symbol} ({self.status})"
 
