@@ -9,7 +9,7 @@ from backtester.models import BacktestRun, Trade
 from backtester.kafka_producer import publish_run_bars
 from backtester.metrics import calculate_metrics
 from backtester.indicators import get_sma
-
+from backtester.progress import set_progress, clear_progress
 
 def run_backtest(run_id, code_file_path):
     run = BacktestRun.objects.get(id=run_id)
@@ -31,6 +31,7 @@ def run_backtest(run_id, code_file_path):
     sma_10 = get_sma(run.symbol, 10, run.start_date, run.end_date)
     sma_50 = get_sma(run.symbol, 50, run.start_date, run.end_date)
     bar_index = 0
+    total_bars = len(sma_10)  # same length as the bar set for this run
 
     consumer = KafkaConsumer(
         topic_name,
@@ -121,6 +122,7 @@ def run_backtest(run_id, code_file_path):
                 entry_price = None
 
             processed += 1
+            set_progress(run.id, processed, total_bars)
         # Close out any open position at the last known price
         # Close out any open position at the last known price
         if shares_held > 0 and last_price:
@@ -142,6 +144,7 @@ def run_backtest(run_id, code_file_path):
         run.save()
 
         calculate_metrics(run)
+        clear_progress(run.id)
 
     finally:
         process.stdin.close()
