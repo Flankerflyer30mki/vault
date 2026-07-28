@@ -58,14 +58,16 @@ def main():
         line = line.strip()
         if not line:
             continue
-        bar = json.loads(line)
+        payload = json.loads(line)
+        bar = payload['bar']
+        indicators = payload.get('indicators', {})
         try:
-            decision = on_bar(bar, state)
+            decision = on_bar(bar, indicators, state)
         except Exception as e:
-            decision = "HOLD"  # fail safe: if user code errors on one bar, don't crash the whole run
+            decision = "HOLD"
 
         print(json.dumps({"decision": decision}))
-        sys.stdout.flush()  # critical: without this, the engine won't see the output right away
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":

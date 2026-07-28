@@ -1,18 +1,13 @@
-def on_bar(bar, state):
-    if 'prices' not in state:
-        state['prices'] = []
+def on_bar(bar, indicators, state):
+    sma_10 = indicators.get('sma_10')
+    sma_50 = indicators.get('sma_50')
 
-    state['prices'].append(bar['close'])
-
-    if len(state['prices']) < 10:
+    if sma_10 is None or sma_50 is None:
         return "HOLD"
 
-    short_avg = sum(state['prices'][-5:]) / 5
-    long_avg = sum(state['prices'][-10:]) / 10
-
-    if short_avg > long_avg:
+    if sma_10 > sma_50:
         return "BUY"
-    elif short_avg < long_avg:
+    elif sma_10 < sma_50:
         return "SELL"
     else:
         return "HOLD"

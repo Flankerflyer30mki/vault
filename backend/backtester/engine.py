@@ -8,6 +8,7 @@ from kafka import KafkaConsumer
 from backtester.models import BacktestRun, Trade
 from backtester.kafka_producer import publish_run_bars
 from backtester.metrics import calculate_metrics
+from backtester.indicators import get_sma
 
 
 def run_backtest(run_id, code_file_path):
@@ -26,6 +27,10 @@ def run_backtest(run_id, code_file_path):
 
     # Publish this run's bars to its own Kafka topic
     topic_name = publish_run_bars(run)
+
+    sma_10 = get_sma(run.symbol, 10, run.start_date, run.end_date)
+    sma_50 = get_sma(run.symbol, 50, run.start_date, run.end_date)
+    bar_index = 0
 
     consumer = KafkaConsumer(
         topic_name,
@@ -51,8 +56,16 @@ def run_backtest(run_id, code_file_path):
             if bar_dict.get('end'):
                 break  # sentinel reached, stream is done
 
-            process.stdin.write(json.dumps(bar_dict) + '\n')
+            payload = {
+                'bar': bar_dict,
+                'indicators': {
+                    'sma_10': sma_10[bar_index] if bar_index < len(sma_10) else None,
+                    'sma_50': sma_50[bar_index] if bar_index < len(sma_50) else None,
+                }
+            }
+            process.stdin.write(json.dumps(payload) + '\n')
             process.stdin.flush()
+            bar_index += 1
 
             response_line = process.stdout.readline()
             response = json.loads(response_line)
