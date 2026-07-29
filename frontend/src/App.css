@@ -332,3 +332,15 @@ h3 {
   padding: 8px;
   font-family: monospace;
 }
+
+.strategy-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.strategy-meta {
+  color: #888;
+  font-size: 13px;
+}

@@ -1,7 +1,11 @@
 import redis
 import json
-
-redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+import os
+redis_client = redis.Redis(
+    host=os.environ.get('REDIS_HOST', 'localhost'),
+    port=int(os.environ.get('REDIS_PORT', 6379)),
+    decode_responses=True
+)
 
 
 def set_progress(run_id, processed, total):

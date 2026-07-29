@@ -1,11 +1,13 @@
 import json
+import os
 from kafka import KafkaProducer
 from kafka.admin import KafkaAdminClient, NewTopic
 from backtester.models import Bar
 
+KAFKA_BOOTSTRAP = os.environ.get('KAFKA_BOOTSTRAP', 'localhost:9092')
 
 def create_topic_if_needed(topic_name):
-    admin = KafkaAdminClient(bootstrap_servers='localhost:9092')
+    admin = KafkaAdminClient(bootstrap_servers=KAFKA_BOOTSTRAP)
     existing_topics = admin.list_topics()
     if topic_name not in existing_topics:
         admin.create_topics([NewTopic(name=topic_name, num_partitions=1, replication_factor=1)])
@@ -17,7 +19,7 @@ def publish_run_bars(run):
     create_topic_if_needed(topic_name)
 
     producer = KafkaProducer(
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers=KAFKA_BOOTSTRAP,
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 

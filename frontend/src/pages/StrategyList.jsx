@@ -36,7 +36,24 @@ const TEMPLATES = {
     return "HOLD"
 `,
 };
+function StrategyCard({ strategy }) {
+  const [expanded, setExpanded] = useState(false);
 
+  return (
+    <li>
+      <div
+        className="strategy-card-header"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <strong>{strategy.name}</strong>
+        <span className="strategy-meta">
+          id: {strategy.id} · {expanded ? "Hide code ▲" : "Show code ▼"}
+        </span>
+      </div>
+      {expanded && <pre>{strategy.code}</pre>}
+    </li>
+  );
+}
 function StrategyList() {
   const [strategies, setStrategies] = useState([]);
   const [name, setName] = useState("");
@@ -113,9 +130,7 @@ function StrategyList() {
       <h3>Existing Strategies</h3>
       <ul className="strategy-list">
         {strategies.map((s) => (
-          <li key={s.id}>
-            <strong>{s.name}</strong> (id: {s.id})<pre>{s.code}</pre>
-          </li>
+          <StrategyCard key={s.id} strategy={s} />
         ))}
       </ul>
     </div>

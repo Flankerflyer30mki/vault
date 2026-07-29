@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 import time
+import os
 from decimal import Decimal
 from django.utils import timezone
 from kafka import KafkaConsumer
@@ -10,6 +11,8 @@ from backtester.kafka_producer import publish_run_bars
 from backtester.metrics import calculate_metrics
 from backtester.indicators import get_sma
 from backtester.progress import set_progress, clear_progress
+
+KAFKA_BOOTSTRAP = os.environ.get('KAFKA_BOOTSTRAP', 'localhost:9092')
 
 def run_backtest(run_id, code_file_path):
     run = BacktestRun.objects.get(id=run_id)
@@ -35,7 +38,7 @@ def run_backtest(run_id, code_file_path):
 
     consumer = KafkaConsumer(
         topic_name,
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers=KAFKA_BOOTSTRAP,
         auto_offset_reset='earliest',
         group_id=f'engine-run-{run.id}',
         value_deserializer=lambda v: json.loads(v.decode('utf-8'))
