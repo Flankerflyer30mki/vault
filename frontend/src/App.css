@@ -185,3 +185,150 @@
 .sell-row td:first-child {
   color: #ff6b6b;
 }
+.hint {
+  color: #888;
+  font-size: 14px;
+  max-width: 500px;
+}
+
+.sort-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.sort-buttons button {
+  background: #222;
+  color: #ccc;
+  border: 1px solid #444;
+  padding: 6px 12px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.sort-buttons button.active {
+  background: #4dabf7;
+  color: #111;
+  border-color: #4dabf7;
+}
+
+.chart-container {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 20px;
+}
+
+.custom-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+h1 {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+h3 {
+  margin-top: 35px;
+  margin-bottom: 15px;
+  color: #ddd;
+}
+
+.content {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.sandbox-card {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-left: 3px solid #4dabf7;
+  border-radius: 4px;
+  padding: 15px 20px;
+  margin-bottom: 20px;
+}
+
+.sandbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sandbox-title {
+  font-weight: bold;
+  color: #ddd;
+}
+
+.sandbox-badge {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.sandbox-badge.passed {
+  background: #1a3a1a;
+  color: #51cf66;
+}
+
+.sandbox-badge.failed {
+  background: #3a1a1a;
+  color: #ff6b6b;
+}
+
+.sandbox-stats {
+  display: flex;
+  gap: 30px;
+  margin-top: 12px;
+}
+
+.sandbox-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sandbox-stats span {
+  font-size: 12px;
+  color: #888;
+}
+
+.sandbox-stats strong {
+  font-size: 15px;
+  color: #eee;
+}
+
+.sandbox-error {
+  color: #ff8080;
+  margin-top: 10px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.strategy-form select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 8px;
+  font-family: monospace;
+}

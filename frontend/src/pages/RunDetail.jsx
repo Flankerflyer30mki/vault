@@ -97,6 +97,42 @@ function RunDetail() {
         </div>
       )}
 
+      {(run.status === "completed" || run.status === "failed") && (
+        <div className="sandbox-card">
+          <div className="sandbox-header">
+            <span className="sandbox-title">Sandbox Execution</span>
+            <span
+              className={
+                run.status === "completed"
+                  ? "sandbox-badge passed"
+                  : "sandbox-badge failed"
+              }
+            >
+              {run.status === "completed" ? "✓ Passed" : "✗ Failed"}
+            </span>
+          </div>
+          {run.status === "completed" && (
+            <div className="sandbox-stats">
+              <div>
+                <span>Execution Time</span>
+                <strong>{run.execution_time_ms}ms</strong>
+              </div>
+              <div>
+                <span>Bars Processed</span>
+                <strong>{run.bars_processed}</strong>
+              </div>
+              <div>
+                <span>Isolation</span>
+                <strong>Subprocess + AST whitelist</strong>
+              </div>
+            </div>
+          )}
+          {run.status === "failed" && (
+            <p className="sandbox-error">{run.error_message}</p>
+          )}
+        </div>
+      )}
+
       {run.status === "completed" && (
         <>
           <div className="metrics-grid">

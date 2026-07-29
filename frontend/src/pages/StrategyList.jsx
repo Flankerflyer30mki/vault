@@ -1,6 +1,42 @@
 import { useEffect, useState } from "react";
 import api from "../api";
 
+const TEMPLATES = {
+  "SMA Crossover": `def on_bar(bar, indicators, state):
+    sma_10 = indicators.get('sma_10')
+    sma_50 = indicators.get('sma_50')
+
+    if sma_10 is None or sma_50 is None:
+        return "HOLD"
+
+    if sma_10 > sma_50:
+        return "BUY"
+    elif sma_10 < sma_50:
+        return "SELL"
+    else:
+        return "HOLD"
+`,
+  "Momentum Threshold": `def on_bar(bar, indicators, state):
+    sma_10 = indicators.get('sma_10')
+    sma_50 = indicators.get('sma_50')
+
+    if sma_10 is None or sma_50 is None:
+        return "HOLD"
+
+    diff_pct = (sma_10 - sma_50) / sma_50
+
+    if diff_pct > 0.02:
+        return "BUY"
+    elif diff_pct < -0.02:
+        return "SELL"
+    else:
+        return "HOLD"
+`,
+  "Always Hold (do nothing)": `def on_bar(bar, indicators, state):
+    return "HOLD"
+`,
+};
+
 function StrategyList() {
   const [strategies, setStrategies] = useState([]);
   const [name, setName] = useState("");
@@ -45,6 +81,24 @@ function StrategyList() {
           onChange={(e) => setName(e.target.value)}
           required
         />
+
+        <label>
+          Start from a template (optional)
+          <select
+            onChange={(e) =>
+              e.target.value && setCode(TEMPLATES[e.target.value])
+            }
+            defaultValue=""
+          >
+            <option value="">-- Select a template --</option>
+            {Object.keys(TEMPLATES).map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <textarea
           placeholder={`def on_bar(bar, indicators, state):\n    sma_10 = indicators.get('sma_10')\n    sma_50 = indicators.get('sma_50')\n    ...\n    return "BUY" or "SELL" or "HOLD"`}
           value={code}
