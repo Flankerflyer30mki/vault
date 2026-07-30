@@ -13,9 +13,12 @@ redis_client = redis.Redis(
 def get_sma(symbol, window, start_date, end_date):
     cache_key = f"indicator:{symbol}:sma:{window}:{start_date}:{end_date}"
 
-    cached = redis_client.get(cache_key)
-    if cached:
-        return json.loads(cached)
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except redis.exceptions.RedisError:
+        pass  # Redis unavailable — just recompute instead of using cache
 
     bars = list(Bar.objects.filter(
         symbol=symbol,
@@ -31,5 +34,9 @@ def get_sma(symbol, window, start_date, end_date):
         else:
             sma_values.append(sum(closes[i - window + 1:i + 1]) / window)
 
-    redis_client.set(cache_key, json.dumps(sma_values), ex=3600)  # cache expires after 1 hour
+    try:
+        redis_client.set(cache_key, json.dumps(sma_values), ex=3600)
+    except redis.exceptions.RedisError:
+        pass  # caching is a nice-to-have, not required for correctness
+
     return sma_values
