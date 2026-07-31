@@ -35,10 +35,12 @@ class BacktestRunSerializer(serializers.ModelSerializer):
         if data['end_date'] <= data['start_date']:
             raise serializers.ValidationError("end_date must be after start_date")
 
-        from backtester.models import Bar
-        bar_exists = Bar.objects.filter(symbol=data['symbol']).exists()
-        if not bar_exists:
-            raise serializers.ValidationError(f"No data available for symbol '{data['symbol']}'")
+        from backtester.data_fetch import ensure_symbol_data
+        success = ensure_symbol_data(data['symbol'], data['start_date'], data['end_date'])
+        if not success:
+            raise serializers.ValidationError(
+                f"Could not find market data for symbol '{data['symbol']}'. Check the ticker is correct."
+            )
 
         return data
 

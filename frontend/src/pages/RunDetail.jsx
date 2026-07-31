@@ -63,6 +63,11 @@ function RunDetail() {
   if (!run) return <p>Loading...</p>;
 
   const isRunning = run.status === "pending" || run.status === "running";
+  const hasNoMetrics = run.status === "completed" && run.cagr === null;
+  const isKafkaFailure =
+    run.status === "failed" &&
+    run.error_message &&
+    run.error_message.includes("Kafka");
 
   return (
     <div>
@@ -91,9 +96,41 @@ function RunDetail() {
         </div>
       )}
 
-      {run.status === "failed" && (
+      {run.status === "failed" && isKafkaFailure && (
+        <div className="error-box">
+          <p className="error-title">⚡ Live Demo Limitation</p>
+          <p>
+            This backtest requires Kafka and TimescaleDB, which aren't
+            available on this free-tier live deployment. The complete system
+            — including real backtest execution — runs fully locally with a
+            single command via Docker Compose.
+          </p>
+          <p>
+            
+              <a href="https://github.com/Flankerflyer30mki/vault"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View setup instructions on GitHub →
+            </a>
+          </p>
+        </div>
+      )}
+
+      {run.status === "failed" && !isKafkaFailure && (
         <div className="error-box">
           <p>Run failed: {run.error_message}</p>
+        </div>
+      )}
+
+      {hasNoMetrics && (
+        <div className="error-box">
+          <p>
+            This run completed but generated no trades — likely because there
+            wasn't enough historical data ({run.bars_processed} bars) for the
+            strategy's indicators to activate. Try a longer date range or a
+            more established symbol.
+          </p>
         </div>
       )}
 
@@ -128,7 +165,11 @@ function RunDetail() {
             </div>
           )}
           {run.status === "failed" && (
-            <p className="sandbox-error">{run.error_message}</p>
+            <p className="sandbox-error">
+              {isKafkaFailure
+                ? "Unavailable in this live demo — see GitHub for local setup instructions."
+                : run.error_message}
+            </p>
           )}
         </div>
       )}
@@ -138,23 +179,41 @@ function RunDetail() {
           <div className="metrics-grid">
             <div className="metric-card">
               <span>Final Value</span>
-              <strong>${parseFloat(run.final_value).toFixed(2)}</strong>
+              <strong>
+                {run.final_value !== null
+                  ? "$" + parseFloat(run.final_value).toFixed(2)
+                  : "N/A"}
+              </strong>
             </div>
             <div className="metric-card">
               <span>CAGR</span>
-              <strong>{(run.cagr * 100).toFixed(2)}%</strong>
+              <strong>
+                {run.cagr !== null ? (run.cagr * 100).toFixed(2) + "%" : "N/A"}
+              </strong>
             </div>
             <div className="metric-card">
               <span>Sharpe Ratio</span>
-              <strong>{run.sharpe_ratio.toFixed(2)}</strong>
+              <strong>
+                {run.sharpe_ratio !== null
+                  ? run.sharpe_ratio.toFixed(2)
+                  : "N/A"}
+              </strong>
             </div>
             <div className="metric-card">
               <span>Max Drawdown</span>
-              <strong>{(run.max_drawdown * 100).toFixed(2)}%</strong>
+              <strong>
+                {run.max_drawdown !== null
+                  ? (run.max_drawdown * 100).toFixed(2) + "%"
+                  : "N/A"}
+              </strong>
             </div>
             <div className="metric-card">
               <span>Win Rate</span>
-              <strong>{(run.win_rate * 100).toFixed(2)}%</strong>
+              <strong>
+                {run.win_rate !== null
+                  ? (run.win_rate * 100).toFixed(2) + "%"
+                  : "N/A"}
+              </strong>
             </div>
             <div className="metric-card">
               <span>Execution Time</span>
@@ -163,47 +222,60 @@ function RunDetail() {
           </div>
 
           <h3>Equity Curve</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={equityCurve}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis dataKey="bar" stroke="#888" />
-              <YAxis stroke="#888" domain={["auto", "auto"]} />
-              <Tooltip
-                contentStyle={{ background: "#222", border: "1px solid #444" }}
-              />
-              <Line
-                type="monotone"
-                dataKey="value"
-                stroke="#4dabf7"
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {equityCurve.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={equityCurve}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis dataKey="bar" stroke="#888" />
+                <YAxis stroke="#888" domain={["auto", "auto"]} />
+                <Tooltip
+                  contentStyle={{
+                    background: "#222",
+                    border: "1px solid #444",
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#4dabf7"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="hint">
+              No equity curve data available for this run.
+            </p>
+          )}
 
           <h3>Trade Log ({trades.length} trades)</h3>
-          <table className="trade-table">
-            <thead>
-              <tr>
-                <th>Side</th>
-                <th>Date</th>
-                <th>Price</th>
-                <th>Quantity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((t) => (
-                <tr
-                  key={t.id}
-                  className={t.side === "BUY" ? "buy-row" : "sell-row"}
-                >
-                  <td>{t.side}</td>
-                  <td>{new Date(t.ts).toLocaleDateString()}</td>
-                  <td>${parseFloat(t.price).toFixed(2)}</td>
-                  <td>{parseFloat(t.quantity).toFixed(4)}</td>
+          {trades.length > 0 ? (
+            <table className="trade-table">
+              <thead>
+                <tr>
+                  <th>Side</th>
+                  <th>Date</th>
+                  <th>Price</th>
+                  <th>Quantity</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {trades.map((t) => (
+                  <tr
+                    key={t.id}
+                    className={t.side === "BUY" ? "buy-row" : "sell-row"}
+                  >
+                    <td>{t.side}</td>
+                    <td>{new Date(t.ts).toLocaleDateString()}</td>
+                    <td>${parseFloat(t.price).toFixed(2)}</td>
+                    <td>{parseFloat(t.quantity).toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="hint">No trades were executed during this run.</p>
+          )}
         </>
       )}
     </div>
