@@ -32,6 +32,7 @@ if env("RENDER_EXTERNAL_HOSTNAME"):  # injected by Render
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS environment variable is required when DEBUG is off")
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS") or (["http://localhost:5173"] if DEBUG else [])
+CORS_ALLOW_HEADERS = ["accept", "authorization", "content-type", "user-agent", "x-csrftoken", "x-requested-with", "idempotency-key"]
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
