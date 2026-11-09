@@ -1,73 +1,33 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import api from "../api";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import api, { errorText, money, num, pct, toPoints, usePoll } from "../api";
+import { Assumptions, Disclaimer } from "../components";
+
+const SAMPLE_LABEL = { full: "Full period", in: "In-sample (optimised)", out: "Out-of-sample (held out)" };
 
 function RunDetail() {
   const { id } = useParams();
-  const [run, setRun] = useState(null);
-  const [progress, setProgress] = useState(null);
+  const { data: run, error } = usePoll(`/runs/${id}/`, 1500);
   const [trades, setTrades] = useState([]);
-  const [equityCurve, setEquityCurve] = useState([]);
-  const intervalRef = useRef(null);
+  const [tradeError, setTradeError] = useState("");
 
-  const fetchRun = () => {
-    api.get(`/runs/${id}/`).then((response) => {
-      setRun(response.data);
-    });
-  };
-
-  const fetchProgress = () => {
-    api.get(`/runs/${id}/progress/`).then((response) => {
-      setProgress(response.data);
-      if (response.data.done) {
-        clearInterval(intervalRef.current);
-        fetchRun();
-        fetchTrades();
-        fetchEquityCurve();
-      }
-    });
-  };
-
-  const fetchTrades = () => {
-    api.get(`/runs/${id}/trades/`).then((response) => {
-      setTrades(response.data);
-    });
-  };
-
-  const fetchEquityCurve = () => {
-    api.get(`/runs/${id}/equity-curve/`).then((response) => {
-      const formatted = response.data.equity_curve.map((value, index) => ({
-        bar: index,
-        value: value,
-      }));
-      setEquityCurve(formatted);
-    });
-  };
-
+  const status = run?.status;
   useEffect(() => {
-    fetchRun();
-    fetchProgress();
-    intervalRef.current = setInterval(fetchProgress, 1000);
-    return () => clearInterval(intervalRef.current);
-  }, [id]);
+    if (status !== "completed") return;
+    api
+      .get(`/runs/${id}/trades/`)
+      .then((res) => setTrades(res.data))
+      .catch((err) => setTradeError(errorText(err)));
+  }, [id, status]);
 
-  if (!run) return <p>Loading...</p>;
+  if (!run) return error ? <p className="error">{error}</p> : <p>Loading…</p>;
 
-  const isRunning = run.status === "pending" || run.status === "running";
-  const hasNoMetrics = run.status === "completed" && run.cagr === null;
-  const isKafkaFailure =
-    run.status === "failed" &&
-    run.error_message &&
-    run.error_message.includes("Kafka");
+  const active = ["queued", "preparing_data", "running"].includes(run.status);
+  const progressKnown = run.bars_total > 0 && run.bars_processed !== null;
+  const warnings = run.data_manifest?.warnings || [];
+  const curve = toPoints(run.equity_curve);
+  const legacy = !run.engine_version;
 
   return (
     <div>
@@ -75,209 +35,163 @@ function RunDetail() {
         Run #{run.id} — {run.strategy_name}
       </h1>
       <p>
-        {run.symbol} | {run.start_date} to {run.end_date} | Starting cash: $
-        {run.starting_cash}
+        {run.symbol} | {run.start_date} to {run.end_date} | Starting cash: {money(run.starting_cash)} |{" "}
+        {SAMPLE_LABEL[run.sample]}
       </p>
-
-      {isRunning && progress && (
-        <div className="progress-box">
-          <p>Status: {run.status}</p>
-          <div className="progress-bar-outer">
-            <div
-              className="progress-bar-inner"
-              style={{
-                width: `${progress.total > 0 ? (progress.processed / progress.total) * 100 : 0}%`,
-              }}
-            />
-          </div>
-          <p>
-            {progress.processed} / {progress.total} bars processed
-          </p>
-        </div>
-      )}
-
-      {run.status === "failed" && isKafkaFailure && (
+      {error && <p className="error">Live updates paused: {error}</p>}
+      {legacy && (
         <div className="error-box">
-          <p className="error-title">⚡ Live Demo Limitation</p>
-          <p>
-            This backtest requires Kafka and TimescaleDB, which aren't
-            available on this free-tier live deployment. The complete system
-            — including real backtest execution — runs fully locally with a
-            single command via Docker Compose.
-          </p>
-          <p>
-            
-              <a href="https://github.com/Flankerflyer30mki/vault"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              View setup instructions on GitHub →
-            </a>
-          </p>
+          This run was produced by the pre-2.0 engine, which had known accounting and lookahead defects. Its numbers
+          are not reliable; re-run it.
         </div>
       )}
 
-      {run.status === "failed" && !isKafkaFailure && (
-        <div className="error-box">
-          <p>Run failed: {run.error_message}</p>
-        </div>
-      )}
-
-      {hasNoMetrics && (
-        <div className="error-box">
-          <p>
-            This run completed but generated no trades — likely because there
-            wasn't enough historical data ({run.bars_processed} bars) for the
-            strategy's indicators to activate. Try a longer date range or a
-            more established symbol.
-          </p>
-        </div>
-      )}
-
-      {(run.status === "completed" || run.status === "failed") && (
-        <div className="sandbox-card">
-          <div className="sandbox-header">
-            <span className="sandbox-title">Sandbox Execution</span>
-            <span
-              className={
-                run.status === "completed"
-                  ? "sandbox-badge passed"
-                  : "sandbox-badge failed"
-              }
-            >
-              {run.status === "completed" ? "✓ Passed" : "✗ Failed"}
-            </span>
-          </div>
-          {run.status === "completed" && (
-            <div className="sandbox-stats">
-              <div>
-                <span>Execution Time</span>
-                <strong>{run.execution_time_ms}ms</strong>
+      {active && (
+        <div className="progress-box" role="status">
+          <p>Status: {run.status.replace("_", " ")}</p>
+          {progressKnown ? (
+            <>
+              <div className="progress-bar-outer">
+                <div
+                  className="progress-bar-inner"
+                  style={{ width: `${(run.bars_processed / run.bars_total) * 100}%` }}
+                />
               </div>
-              <div>
-                <span>Bars Processed</span>
-                <strong>{run.bars_processed}</strong>
-              </div>
-              <div>
-                <span>Isolation</span>
-                <strong>Subprocess + AST whitelist</strong>
-              </div>
-            </div>
+              <p>
+                {run.bars_processed} / {run.bars_total} bars processed
+              </p>
+            </>
+          ) : (
+            <p className="hint">{run.status === "queued" ? "Waiting for a worker…" : "Progress not available yet."}</p>
           )}
-          {run.status === "failed" && (
-            <p className="sandbox-error">
-              {isKafkaFailure
-                ? "Unavailable in this live demo — see GitHub for local setup instructions."
-                : run.error_message}
-            </p>
-          )}
+        </div>
+      )}
+
+      {run.status === "failed" && (
+        <div className="error-box">
+          <p className="error-title">Run failed ({run.failure_category || "unknown"})</p>
+          <p>{run.error_message}</p>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="error-box">
+          <p className="error-title">Data coverage warnings</p>
+          <ul>
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
         </div>
       )}
 
       {run.status === "completed" && (
         <>
+          {trades.length === 0 && !tradeError && (
+            <p className="hint">Completed with no trades: the strategy never signalled an entry. Equity stays flat.</p>
+          )}
           <div className="metrics-grid">
-            <div className="metric-card">
-              <span>Final Value</span>
-              <strong>
-                {run.final_value !== null
-                  ? "$" + parseFloat(run.final_value).toFixed(2)
-                  : "N/A"}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>CAGR</span>
-              <strong>
-                {run.cagr !== null ? (run.cagr * 100).toFixed(2) + "%" : "N/A"}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>Sharpe Ratio</span>
-              <strong>
-                {run.sharpe_ratio !== null
-                  ? run.sharpe_ratio.toFixed(2)
-                  : "N/A"}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>Max Drawdown</span>
-              <strong>
-                {run.max_drawdown !== null
-                  ? (run.max_drawdown * 100).toFixed(2) + "%"
-                  : "N/A"}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>Win Rate</span>
-              <strong>
-                {run.win_rate !== null
-                  ? (run.win_rate * 100).toFixed(2) + "%"
-                  : "N/A"}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>Execution Time</span>
-              <strong>{run.execution_time_ms}ms</strong>
-            </div>
+            {[
+              ["Final Value", money(run.final_value)],
+              ["CAGR", pct(run.cagr)],
+              ["Sharpe Ratio", num(run.sharpe_ratio)],
+              ["Max Drawdown", pct(run.max_drawdown)],
+              ["Win Rate (net)", pct(run.win_rate)],
+              ["Buy & Hold (gross)", pct(run.buy_and_hold_return)],
+              ["Commission Paid", money(run.total_commission)],
+              ["Slippage Cost", money(run.total_slippage)],
+              ["Execution Time", `${run.execution_time_ms} ms`],
+            ].map(([label, value]) => (
+              <div className="metric-card" key={label}>
+                <span>{label}</span>
+                <strong>{value}</strong>
+              </div>
+            ))}
           </div>
 
           <h3>Equity Curve</h3>
-          {equityCurve.length > 0 ? (
+          {curve.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={equityCurve}>
+              <LineChart data={curve}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                <XAxis dataKey="bar" stroke="#888" />
+                <XAxis dataKey="t" stroke="#888" minTickGap={40} />
                 <YAxis stroke="#888" domain={["auto", "auto"]} />
                 <Tooltip
-                  contentStyle={{
-                    background: "#222",
-                    border: "1px solid #444",
-                  }}
+                  contentStyle={{ background: "#222", border: "1px solid #444" }}
+                  formatter={(v) => money(v)}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="#4dabf7"
-                  dot={false}
-                />
+                <Line type="monotone" dataKey="v" name="Equity" stroke="#4dabf7" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <p className="hint">
-              No equity curve data available for this run.
-            </p>
+            <p className="hint">No equity curve recorded for this run.</p>
           )}
 
-          <h3>Trade Log ({trades.length} trades)</h3>
-          {trades.length > 0 ? (
+          <h3>Trade Log ({trades.length} fills)</h3>
+          {tradeError && <p className="error">{tradeError}</p>}
+          {trades.length > 0 && (
             <table className="trade-table">
               <thead>
                 <tr>
                   <th>Side</th>
                   <th>Date</th>
-                  <th>Price</th>
+                  <th>Fill Price</th>
                   <th>Quantity</th>
+                  <th>Commission</th>
+                  <th>Cash After</th>
+                  <th>Reason</th>
                 </tr>
               </thead>
               <tbody>
                 {trades.map((t) => (
-                  <tr
-                    key={t.id}
-                    className={t.side === "BUY" ? "buy-row" : "sell-row"}
-                  >
+                  <tr key={t.id} className={t.side === "BUY" ? "buy-row" : "sell-row"}>
                     <td>{t.side}</td>
-                    <td>{new Date(t.ts).toLocaleDateString()}</td>
-                    <td>${parseFloat(t.price).toFixed(2)}</td>
-                    <td>{parseFloat(t.quantity).toFixed(4)}</td>
+                    <td>{t.ts.slice(0, 10)}</td>
+                    <td>{money(t.price)}</td>
+                    <td>{num(t.quantity, 6)}</td>
+                    <td>{money(t.commission)}</td>
+                    <td>{money(t.cash_after)}</td>
+                    <td>{t.reason.replace("_", " ")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          ) : (
-            <p className="hint">No trades were executed during this run.</p>
           )}
+          <h3>Execution Assumptions</h3>
+          <Assumptions run={run} />
         </>
       )}
+
+      {(run.status === "completed" || run.status === "failed") && (
+        <div className="sandbox-card">
+          <div className="sandbox-header">
+            <span className="sandbox-title">Reproducibility</span>
+          </div>
+          <div className="sandbox-stats">
+            <div>
+              <span>Engine</span>
+              <strong>{run.engine_version || "legacy"}</strong>
+            </div>
+            <div>
+              <span>Strategy SHA-256</span>
+              <strong title={run.strategy_hash}>{run.strategy_hash.slice(0, 12) || "n/a"}</strong>
+            </div>
+            <div>
+              <span>Data</span>
+              <strong title={run.data_manifest?.data_sha256}>
+                {run.data_manifest
+                  ? `${run.data_manifest.provider} · ${run.data_manifest.bar_count} bars · ${run.data_manifest.data_sha256.slice(0, 12)}`
+                  : "n/a"}
+              </strong>
+            </div>
+            <div>
+              <span>Attempts</span>
+              <strong>{run.attempts}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+      <Disclaimer />
     </div>
   );
 }

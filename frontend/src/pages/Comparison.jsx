@@ -1,89 +1,41 @@
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import api from "../api";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { money, num, pct, toPoints, usePoll } from "../api";
+import { Disclaimer } from "../components";
 
-const COLORS = [
-  "#4dabf7",
-  "#ff6b6b",
-  "#51cf66",
-  "#ffd43b",
-  "#be4bdb",
-  "#ff922b",
-  "#20c997",
-  "#748ffc",
-  "#f06595",
-];
+const COLORS = ["#4dabf7", "#ff6b6b", "#51cf66", "#ffd43b", "#be4bdb", "#ff922b", "#20c997", "#748ffc", "#f06595"];
+const SORTS = ["sharpe_ratio", "cagr", "final_value", "max_drawdown", "win_rate"];
+const label = (r) => `#${r.id} SL ${pct(r.stop_loss_pct, 0)} / TP ${pct(r.take_profit_pct, 0)}`;
+
+function mergeCurves(runs) {
+  const byDate = new Map();
+  runs.forEach((r) =>
+    toPoints(r.equity_curve).forEach(({ t, v }) => {
+      if (!byDate.has(t)) byDate.set(t, { t });
+      byDate.get(t)[`run_${r.id}`] = v;
+    }),
+  );
+  return [...byDate.values()].sort((a, b) => (a.t < b.t ? -1 : 1));
+}
 
 function Comparison() {
   const { id } = useParams();
-  const [job, setJob] = useState(null);
-  const [runs, setRuns] = useState([]);
-  const [chartData, setChartData] = useState([]);
+  const { data: job, error } = usePoll(`/optimizations/${id}/`, 2500);
   const [sortField, setSortField] = useState("sharpe_ratio");
 
-  const fetchAllRuns = async (runIds) => {
-    const runDetails = await Promise.all(
-      runIds.map((rid) => api.get(`/runs/${rid}/`).then((res) => res.data)),
-    );
-    setRuns(runDetails);
+  if (!job) return error ? <p className="error">{error}</p> : <p>Loading…</p>;
 
-    const curves = await Promise.all(
-      runIds.map((rid) =>
-        api.get(`/runs/${rid}/equity-curve/`).then((res) => ({
-          id: rid,
-          curve: res.data.equity_curve,
-        })),
-      ),
-    );
-
-    const maxLength = Math.max(...curves.map((c) => c.curve.length));
-    const merged = [];
-    for (let i = 0; i < maxLength; i++) {
-      const point = { bar: i };
-      curves.forEach((c) => {
-        point[`run_${c.id}`] = c.curve[i] ?? null;
-      });
-      merged.push(point);
-    }
-    setChartData(merged);
-  };
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      api.get(`/optimizations/${id}/`).then((response) => {
-        setJob(response.data);
-        if (response.data.status === "completed") {
-          clearInterval(interval);
-          fetchAllRuns(response.data.run_ids);
-        }
-      });
-    }, 2000);
-
-    api.get(`/optimizations/${id}/`).then((response) => {
-      setJob(response.data);
-      if (response.data.status === "completed") {
-        clearInterval(interval);
-        fetchAllRuns(response.data.run_ids);
-      }
-    });
-
-    return () => clearInterval(interval);
-  }, [id]);
-
-  if (!job) return <p>Loading...</p>;
-
-  const sortedRuns = [...runs].sort(
-    (a, b) => (b[sortField] ?? -Infinity) - (a[sortField] ?? -Infinity),
-  );
+  const runs = job.runs || [];
+  const inSample = runs.filter((r) => r.sample !== "out");
+  const oos = runs.find((r) => r.sample === "out");
+  const done = inSample.filter((r) => r.status === "completed");
+  const failed = inSample.filter((r) => r.status === "failed");
+  const sorted = [...done].sort((a, b) => {
+    const x = parseFloat(a[sortField] ?? -Infinity), y = parseFloat(b[sortField] ?? -Infinity);
+    return sortField === "max_drawdown" ? x - y : y - x;
+  });
+  const chartData = mergeCurves(done);
 
   return (
     <div>
@@ -91,130 +43,111 @@ function Comparison() {
         Optimization #{job.id} — {job.strategy_name}
       </h1>
       <p>
-        {job.symbol} | {job.start_date} to {job.end_date} | Status: {job.status}
+        {job.symbol} | {job.start_date} to {job.end_date} | Status: {job.status.replace("_", " ")}
       </p>
-
-      {job.status !== "completed" && (
-        <p>
-          Running {job.run_ids.length > 0 ? job.run_ids.length : ""} backtests
-          concurrently, please wait...
+      {job.split_date && (
+        <p className="hint">
+          In-sample: {job.start_date} to day before {job.split_date}. Out-of-sample: {job.split_date} to {job.end_date}.
         </p>
       )}
+      {error && <p className="error">Live updates paused: {error}</p>}
+      <p>
+        {done.length} completed · {failed.length} failed · {inSample.length - done.length - failed.length} pending
+      </p>
+      {failed.length > 0 && (
+        <div className="error-box">
+          {failed.map((r) => (
+            <p key={r.id}>
+              <Link to={`/runs/${r.id}`}>{label(r)}</Link>: {r.error_message}
+            </p>
+          ))}
+        </div>
+      )}
 
-      {job.status === "completed" && runs.length > 0 && (
+      {oos && (
+        <div className="sandbox-card">
+          <div className="sandbox-header">
+            <span className="sandbox-title">Out-of-sample result (best in-sample: {label(oos)})</span>
+            <span className={oos.status === "completed" ? "sandbox-badge passed" : "sandbox-badge failed"}>
+              {oos.status.replace("_", " ")}
+            </span>
+          </div>
+          {oos.status === "completed" && (
+            <div className="sandbox-stats">
+              <div><span>Final Value</span><strong>{money(oos.final_value)}</strong></div>
+              <div><span>CAGR</span><strong>{pct(oos.cagr)}</strong></div>
+              <div><span>Sharpe</span><strong>{num(oos.sharpe_ratio)}</strong></div>
+              <div><span>Max DD</span><strong>{pct(oos.max_drawdown)}</strong></div>
+              <div><span>Buy & Hold</span><strong>{pct(oos.buy_and_hold_return)}</strong></div>
+            </div>
+          )}
+          <Link to={`/runs/${oos.id}`}>Open run →</Link>
+        </div>
+      )}
+
+      {done.length > 0 && (
         <>
-          <h3>Results (sorted by {sortField.replace("_", " ")})</h3>
+          <h3>In-sample results (sorted by {sortField.replace("_", " ")}) — optimised, expect optimism</h3>
           <div className="sort-buttons">
-            {[
-              "sharpe_ratio",
-              "cagr",
-              "final_value",
-              "max_drawdown",
-              "win_rate",
-            ].map((field) => (
-              <button
-                key={field}
-                className={sortField === field ? "active" : ""}
-                onClick={() => setSortField(field)}
-              >
-                {field.replace("_", " ")}
+            {SORTS.map((f) => (
+              <button key={f} type="button" aria-pressed={sortField === f} className={sortField === f ? "active" : ""} onClick={() => setSortField(f)}>
+                {f.replace("_", " ")}
               </button>
             ))}
           </div>
-
           <table className="trade-table">
             <thead>
               <tr>
-                <th>Run</th>
-                <th>Stop Loss</th>
-                <th>Take Profit</th>
-                <th>Final Value</th>
-                <th>CAGR</th>
-                <th>Sharpe</th>
-                <th>Max Drawdown</th>
-                <th>Win Rate</th>
+                <th>Run</th><th>Stop Loss</th><th>Take Profit</th><th>Final Value</th><th>CAGR</th>
+                <th>Sharpe</th><th>Max Drawdown</th><th>Win Rate</th><th>Costs</th>
               </tr>
             </thead>
             <tbody>
-              {sortedRuns.map((r, idx) => (
-                <tr
-                  key={r.id}
-                  style={{ color: idx === 0 ? "#51cf66" : undefined }}
-                >
-                  <td>
-                    #{r.id} {idx === 0 && "★ Best"}
-                  </td>
-                  <td>{(r.stop_loss_pct * 100).toFixed(0)}%</td>
-                  <td>{(r.take_profit_pct * 100).toFixed(0)}%</td>
-                  <td>${parseFloat(r.final_value).toFixed(2)}</td>
-                  <td>{(r.cagr * 100).toFixed(2)}%</td>
-                  <td>{r.sharpe_ratio.toFixed(2)}</td>
-                  <td>{(r.max_drawdown * 100).toFixed(2)}%</td>
-                  <td>{(r.win_rate * 100).toFixed(2)}%</td>
+              {sorted.map((r) => (
+                <tr key={r.id}>
+                  <td><Link to={`/runs/${r.id}`}>#{r.id}</Link></td>
+                  <td>{pct(r.stop_loss_pct, 0)}</td>
+                  <td>{pct(r.take_profit_pct, 0)}</td>
+                  <td>{money(r.final_value)}</td>
+                  <td>{pct(r.cagr)}</td>
+                  <td>{num(r.sharpe_ratio)}</td>
+                  <td>{pct(r.max_drawdown)}</td>
+                  <td>{pct(r.win_rate)}</td>
+                  <td>{money(parseFloat(r.total_commission || 0) + parseFloat(r.total_slippage || 0))}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          <h3>Overlaid Equity Curves</h3>
+          <h3>In-sample equity curves</h3>
           <div className="chart-container">
             <ResponsiveContainer width="100%" height={450}>
-              <LineChart
-                data={chartData}
-                margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-              >
+              <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-                <XAxis dataKey="bar" stroke="#888" tick={{ fontSize: 12 }} />
-                <YAxis
-                  stroke="#888"
-                  domain={["auto", "auto"]}
-                  tick={{ fontSize: 12 }}
-                />
+                <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 12 }} minTickGap={40} />
+                <YAxis stroke="#888" domain={["auto", "auto"]} tick={{ fontSize: 12 }} />
                 <Tooltip
-                  contentStyle={{
-                    background: "#1a1a1a",
-                    border: "1px solid #444",
-                    fontSize: "12px",
-                    maxWidth: "220px",
-                  }}
+                  contentStyle={{ background: "#1a1a1a", border: "1px solid #444", fontSize: "12px", maxWidth: "240px" }}
                   labelStyle={{ color: "#888" }}
-                  formatter={(value, name) => [
-                    `$${parseFloat(value).toFixed(2)}`,
-                    name,
-                  ]}
+                  formatter={(v, name) => [money(v), name]}
                 />
-                {runs.map((r, idx) => (
-                  <Line
-                    key={r.id}
-                    type="monotone"
-                    dataKey={`run_${r.id}`}
-                    name={`#${r.id} (SL ${(r.stop_loss_pct * 100).toFixed(0)}%/TP ${(r.take_profit_pct * 100).toFixed(0)}%)`}
-                    stroke={COLORS[idx % COLORS.length]}
-                    strokeWidth={1.5}
-                    dot={false}
-                    connectNulls
-                  />
+                {done.map((r, idx) => (
+                  <Line key={r.id} type="monotone" dataKey={`run_${r.id}`} name={label(r)} stroke={COLORS[idx % COLORS.length]} strokeWidth={1.5} dot={false} connectNulls />
                 ))}
               </LineChart>
             </ResponsiveContainer>
-
             <div className="custom-legend">
-              {runs.map((r, idx) => (
+              {done.map((r, idx) => (
                 <div key={r.id} className="legend-item">
-                  <span
-                    className="legend-swatch"
-                    style={{ background: COLORS[idx % COLORS.length] }}
-                  />
-                  <span>
-                    #{r.id} — SL {(r.stop_loss_pct * 100).toFixed(0)}% / TP{" "}
-                    {(r.take_profit_pct * 100).toFixed(0)}%
-                  </span>
+                  <span className="legend-swatch" style={{ background: COLORS[idx % COLORS.length] }} />
+                  <span>{label(r)}</span>
                 </div>
               ))}
             </div>
           </div>
         </>
       )}
+      <Disclaimer />
     </div>
   );
 }

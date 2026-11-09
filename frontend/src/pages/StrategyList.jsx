@@ -1,70 +1,46 @@
 import { useEffect, useState } from "react";
-import api from "../api";
+import api, { errorText, list } from "../api";
 
-const TEMPLATES = {
-  "SMA Crossover": `def on_bar(bar, indicators, state):
-    sma_10 = indicators.get('sma_10')
-    sma_50 = indicators.get('sma_50')
-
-    if sma_10 is None or sma_50 is None:
+const TEMPLATE = `def on_bar(bar, indicators, state):
+    fast, slow = indicators.get('sma_10'), indicators.get('sma_50')
+    if fast is None or slow is None:
         return "HOLD"
+    return "BUY" if fast > slow else "SELL"
+`;
 
-    if sma_10 > sma_50:
-        return "BUY"
-    elif sma_10 < sma_50:
-        return "SELL"
-    else:
-        return "HOLD"
-`,
-  "Momentum Threshold": `def on_bar(bar, indicators, state):
-    sma_10 = indicators.get('sma_10')
-    sma_50 = indicators.get('sma_50')
-
-    if sma_10 is None or sma_50 is None:
-        return "HOLD"
-
-    diff_pct = (sma_10 - sma_50) / sma_50
-
-    if diff_pct > 0.02:
-        return "BUY"
-    elif diff_pct < -0.02:
-        return "SELL"
-    else:
-        return "HOLD"
-`,
-  "Always Hold (do nothing)": `def on_bar(bar, indicators, state):
-    return "HOLD"
-`,
-};
 function StrategyCard({ strategy }) {
   const [expanded, setExpanded] = useState(false);
-
   return (
     <li>
-      <div
+      <button
+        type="button"
         className="strategy-card-header"
+        aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
       >
         <strong>{strategy.name}</strong>
+        {strategy.is_builtin && <span className="badge">built-in</span>}
         <span className="strategy-meta">
           id: {strategy.id} · {expanded ? "Hide code ▲" : "Show code ▼"}
         </span>
-      </div>
+      </button>
       {expanded && <pre>{strategy.code}</pre>}
     </li>
   );
 }
+
 function StrategyList() {
   const [strategies, setStrategies] = useState([]);
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(TEMPLATE);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
-  const fetchStrategies = () => {
-    api.get("/strategies/").then((response) => {
-      setStrategies(response.data);
-    });
-  };
+  const fetchStrategies = () =>
+    api
+      .get("/strategies/")
+      .then((res) => setStrategies(list(res.data)))
+      .catch((err) => setLoadError(errorText(err)));
 
   useEffect(() => {
     fetchStrategies();
@@ -77,62 +53,50 @@ function StrategyList() {
       .post("/strategies/", { name, code })
       .then(() => {
         setName("");
-        setCode("");
+        setCode(TEMPLATE);
         fetchStrategies();
       })
-      .catch((err) => {
-        setError("Failed to create strategy. Check your code syntax.");
-      });
+      .catch((err) => setError(errorText(err)));
   };
 
   return (
     <div>
       <h1>Strategies</h1>
+      {loadError && <p className="error">{loadError}</p>}
 
-      <form onSubmit={handleSubmit} className="strategy-form">
-        <h3>New Strategy</h3>
-        <input
-          type="text"
-          placeholder="Strategy name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-
-        <label>
-          Start from a template (optional)
-          <select
-            onChange={(e) =>
-              e.target.value && setCode(TEMPLATES[e.target.value])
-            }
-            defaultValue=""
-          >
-            <option value="">-- Select a template --</option>
-            {Object.keys(TEMPLATES).map((key) => (
-              <option key={key} value={key}>
-                {key}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <textarea
-          placeholder={`def on_bar(bar, indicators, state):\n    sma_10 = indicators.get('sma_10')\n    sma_50 = indicators.get('sma_50')\n    ...\n    return "BUY" or "SELL" or "HOLD"`}
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          rows={10}
-          required
-        />
-        {error && <p className="error">{error}</p>}
-        <button type="submit">Create Strategy</button>
-      </form>
-
-      <h3>Existing Strategies</h3>
+      <h3>Available Strategies</h3>
       <ul className="strategy-list">
         {strategies.map((s) => (
           <StrategyCard key={s.id} strategy={s} />
         ))}
       </ul>
+
+      <form onSubmit={handleSubmit} className="strategy-form">
+        <h3>New Strategy</h3>
+        <p className="hint">
+          Custom code runs only where the operator has enabled it. The public demo runs built-in strategies only.
+          Allowed: plain Python and <code>import math</code>. Return &quot;BUY&quot;, &quot;SELL&quot; or
+          &quot;HOLD&quot;.
+        </p>
+        <input
+          type="text"
+          placeholder="Strategy name"
+          value={name}
+          maxLength={100}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <textarea
+          aria-label="Strategy code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          rows={10}
+          maxLength={10000}
+          required
+        />
+        {error && <p className="error pre">{error}</p>}
+        <button type="submit">Create Strategy</button>
+      </form>
     </div>
   );
 }

@@ -1,87 +1,121 @@
-import threading
-import os
+from datetime import timedelta
+from decimal import Decimal
+from itertools import product
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
 from rest_framework import generics, status
-from rest_framework.views import APIView
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
-from backtester.models import Strategy, BacktestRun, Trade, OptimizationJob
-from backtester.serializers import StrategySerializer, BacktestRunSerializer, TradeSerializer, OptimizationJobSerializer
-from backtester.optimizer import run_optimization
-from backtester.engine import run_backtest
-from backtester.progress import get_progress
-from backtester.metrics import calculate_metrics
+
+from backtester.engine import ENGINE_VERSION
+from backtester.jobs import code_hash
+from backtester.models import BacktestRun, OptimizationJob, Strategy, Trade
+from backtester.serializers import (BacktestRunSerializer, OptimizationJobSerializer, RunWithCurveSerializer,
+                                    StrategySerializer, TradeSerializer)
 
 
-class StrategyListCreateView(generics.ListCreateAPIView):
-    queryset = Strategy.objects.all().order_by('-created_at')
+class QueueFull(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "The backtest queue is full. Try again shortly."
+    default_code = "queue_full"
+
+
+def admit(n):
+    """Global admission control: reject before creating work the queue cannot absorb.
+    ponytail: count-then-insert is a soft cap (concurrent requests can overshoot by a few)."""
+    active = BacktestRun.objects.filter(status__in=BacktestRun.ACTIVE).count()
+    if active + n > settings.VAULT["MAX_ACTIVE_RUNS"]:
+        raise QueueFull()
+
+
+class Throttled:
+    def get_throttles(self):
+        self.throttle_scope = "read" if self.request.method == "GET" else self.write_scope
+        return super().get_throttles()
+
+
+class IdempotentCreate:
+    """Repeat POST with the same Idempotency-Key returns the original resource instead of new work."""
+
+    def create(self, request, *args, **kwargs):
+        key = request.headers.get("Idempotency-Key", "")[:64] or None
+        model = self.get_serializer_class().Meta.model
+        if key and (existing := model.objects.filter(idempotency_key=key).first()):
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                obj = self.perform_create(serializer, key)
+        except IntegrityError:
+            obj = model.objects.get(idempotency_key=key)  # concurrent duplicate won the race
+        return Response(self.get_serializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+class StrategyListCreateView(Throttled, generics.ListCreateAPIView):
+    write_scope = "write"
+    queryset = Strategy.objects.order_by("-is_builtin", "-created_at")
     serializer_class = StrategySerializer
 
-
-class BacktestRunListCreateView(generics.ListCreateAPIView):
-    queryset = BacktestRun.objects.all().order_by('-created_at')
-    serializer_class = BacktestRunSerializer
-
     def perform_create(self, serializer):
-        run = serializer.save()
-        # Save the strategy's code to a temp file for the sandbox subprocess to read
-        os.makedirs('strategy_temp', exist_ok=True)
-        code_file_path = f"strategy_temp/strategy_code_run_{run.id}.py"
-        with open(code_file_path, 'w') as f:
-            f.write(run.strategy.code)
-
-        # Run the backtest in a background thread so this request returns immediately
-        thread = threading.Thread(target=run_backtest, args=(run.id, code_file_path))
-        thread.start()
+        if not settings.VAULT["ALLOW_CUSTOM_CODE"]:
+            raise PermissionDenied("Custom strategy code is disabled on this deployment; use a built-in strategy.")
+        serializer.save()
 
 
-class BacktestRunDetailView(generics.RetrieveAPIView):
-    queryset = BacktestRun.objects.all()
+class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
+    write_scope = "jobs"
+    queryset = BacktestRun.objects.select_related("strategy").order_by("-created_at")
     serializer_class = BacktestRunSerializer
 
+    def perform_create(self, serializer, key):
+        admit(1)
+        code = serializer.validated_data["strategy"].code
+        return serializer.save(strategy_code=code, strategy_hash=code_hash(code), engine_version=ENGINE_VERSION,
+                               idempotency_key=key)
 
-class TradeListView(generics.ListAPIView):
+
+class BacktestRunDetailView(Throttled, generics.RetrieveAPIView):
+    queryset = BacktestRun.objects.select_related("strategy")
+    serializer_class = RunWithCurveSerializer
+
+
+class TradeListView(Throttled, generics.ListAPIView):
     serializer_class = TradeSerializer
+    pagination_class = None  # bounded: at most one trade per bar
 
     def get_queryset(self):
-        run_id = self.kwargs['run_id']
-        return Trade.objects.filter(run_id=run_id).order_by('ts')
+        return Trade.objects.filter(run_id=self.kwargs["run_id"]).order_by("ts", "id")
 
 
-class ProgressView(APIView):
-    def get(self, request, run_id):
-        progress = get_progress(run_id)
-        if progress is None:
-            run = BacktestRun.objects.filter(id=run_id).first()
-            if run and run.status == 'completed':
-                return Response({"processed": run.bars_processed, "total": run.bars_processed, "done": True})
-            if run and run.status == 'failed':
-                return Response({"processed": 0, "total": 0, "done": True, "error": run.error_message})
-            return Response({"processed": 0, "total": 0, "done": False})
-        return Response({**progress, "done": False})
-
-
-class EquityCurveView(APIView):
-    def get(self, request, run_id):
-        run = BacktestRun.objects.filter(id=run_id).first()
-        if not run:
-            return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        return Response({"equity_curve": run.equity_curve or []})
-
-class OptimizationJobListCreateView(generics.ListCreateAPIView):
-    queryset = OptimizationJob.objects.all().order_by('-created_at')
+class OptimizationJobListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
+    write_scope = "jobs"
+    queryset = OptimizationJob.objects.select_related("strategy").prefetch_related("runs").order_by("-created_at")
     serializer_class = OptimizationJobSerializer
 
-    def perform_create(self, serializer):
-        job = serializer.save()
-        os.makedirs('strategy_temp', exist_ok=True)
-        code_file_path = f"strategy_temp/strategy_code_opt_{job.id}.py"
-        with open(code_file_path, 'w') as f:
-            f.write(job.strategy.code)
+    def perform_create(self, serializer, key):
+        d = serializer.validated_data
+        grid = list(product(d["stop_loss_options"], d["take_profit_options"]))
+        admit(len(grid) + 1)  # +1: the out-of-sample run
+        job = serializer.save(idempotency_key=key)
+        code = job.strategy.code
+        BacktestRun.objects.bulk_create([BacktestRun(
+            strategy=job.strategy, optimization=job, sample="in", symbol=job.symbol,
+            start_date=job.start_date, end_date=job.split_date - timedelta(days=1), starting_cash=job.starting_cash,
+            stop_loss_pct=Decimal(sl), take_profit_pct=Decimal(tp),
+            strategy_code=code, strategy_hash=code_hash(code), engine_version=ENGINE_VERSION,
+        ) for sl, tp in grid])
+        return job
 
-        thread = threading.Thread(target=run_optimization, args=(job.id, code_file_path))
-        thread.start()
 
-
-class OptimizationJobDetailView(generics.RetrieveAPIView):
-    queryset = OptimizationJob.objects.all()
+class OptimizationJobDetailView(Throttled, generics.RetrieveAPIView):
+    """One call returns the job plus every child run with its equity curve (no N+1 polling)."""
+    queryset = OptimizationJob.objects.select_related("strategy").prefetch_related("runs__strategy")
     serializer_class = OptimizationJobSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        job = self.get_object()
+        data = self.get_serializer(job).data
+        data["runs"] = RunWithCurveSerializer(sorted(job.runs.all(), key=lambda r: r.id), many=True).data
+        return Response(data)

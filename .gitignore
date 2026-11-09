@@ -1,12 +1,11 @@
 backend/venv/
-backend/**/__pycache__/
-backend/*.pyc
-backend/.env
+**/__pycache__/
+*.pyc
+.env
+*.env
 backend/db.sqlite3
 *.log
 .vscode/
 frontend/node_modules/
-frontend/.env
 frontend/dist/
 frontend/build/
-backend/strategy_temp/

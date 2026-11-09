@@ -344,3 +344,26 @@ h3 {
   color: #888;
   font-size: 13px;
 }
+.strategy-card-header {
+  all: unset;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+}
+
+.strategy-card-header:focus-visible {
+  outline: 2px solid #4dabf7;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid #51cf66;
+  color: #51cf66;
+}
+
+.pre {
+  white-space: pre-line;
+}
