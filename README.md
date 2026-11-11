@@ -136,7 +136,6 @@ Other security controls:
 - The API serves JSON only. It has no admin, sessions or cookies, so CSRF is not applicable. Errors return safe messages, and details go to the server logs.
 - The Docker image runs as a non-root user.
 - CI runs `pip-audit` and `npm audit`.
-- **Action needed:** the old `settings.py` committed a Django `SECRET_KEY` and the database password `vaultpass`. Treat both as exposed. Generate a new `SECRET_KEY` on Render and rotate the database password if it was ever reused.
 
 ## Run locally
 
