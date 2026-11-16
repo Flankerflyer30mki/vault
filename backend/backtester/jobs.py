@@ -27,6 +27,7 @@ from backtester.sandbox_runner import StrategyProcess
 log = logging.getLogger(__name__)
 R = BacktestRun
 HEARTBEAT_EVERY = 50  # bars
+HOUSEKEEPING_EVERY_S = 3600  # expired guests and sessions
 
 
 def worker_id():
@@ -155,7 +156,7 @@ def finish_optimization(job):
     try:
         with transaction.atomic():
             R.objects.create(
-                strategy_id=best.strategy_id, optimization=job, sample="out", symbol=best.symbol,
+                owner_id=job.owner_id, strategy_id=best.strategy_id, optimization=job, sample="out", symbol=best.symbol,
                 start_date=job.split_date, end_date=job.end_date, starting_cash=best.starting_cash,
                 max_position_pct=best.max_position_pct, commission_pct=best.commission_pct,
                 slippage_pct=best.slippage_pct, stop_loss_pct=best.stop_loss_pct,
@@ -199,7 +200,7 @@ def work_one(wid):
 def work_forever(poll_s=2.0, stop=lambda: False):
     wid = worker_id()
     log.info("event=worker_started worker=%s", wid)
-    last_recover = 0.0
+    last_recover = last_housekeeping = 0.0
     while not stop():
         # Outside a request Django never recycles connections; without this a worker keeps a dead
         # connection forever after a database restart.
@@ -209,6 +210,10 @@ def work_forever(poll_s=2.0, stop=lambda: False):
                 recover_stale()
                 finish_pending_optimizations()
                 last_recover = time.monotonic()
+            if time.monotonic() - last_housekeeping > HOUSEKEEPING_EVERY_S:
+                from accounts.housekeeping import run as housekeeping
+                housekeeping()
+                last_housekeeping = time.monotonic()
             busy = work_one(wid)
         except Exception:
             log.exception("event=worker_loop_error")

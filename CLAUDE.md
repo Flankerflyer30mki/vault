@@ -32,7 +32,7 @@ MSYS_NO_PATHCONV=1 docker run --rm --network vault-test -v "$PWD/backend:/app" -
   python:3.12-slim sh -c "pip install -q -r requirements.txt && python manage.py test"
 ```
 
-Frontend (from `frontend/`): `npm ci`, `npm run dev`, `npm run lint`, `npm run build`. `VITE_API_URL` sets the API base (default `http://localhost:8000/api`).
+Frontend (from `frontend/`): `npm ci`, `npm run dev` (proxies `/api` to `VITE_PROXY_TARGET`, default `http://localhost:8000`), `npm run lint`, `npm run build`. The SPA always calls the relative path `/api`.
 
 CI (`.github/workflows/ci.yml`) runs tests on Postgres 16, the migration-drift check, a check that `DEBUG=0` refuses to start without `SECRET_KEY`, `pip-audit`, frontend lint/build, `npm audit`, and both Docker builds.
 
@@ -47,6 +47,7 @@ Two processes from one image, one Postgres database. No Redis/Kafka/Celery by de
 - **`data_fetch.py`** loads bars from the DB and fetches from Yahoo (`yfinance`, adjusted daily) only in the worker, when the span isn't in `SymbolCoverage`. A fetch re-downloads the symbol's whole known span and replaces its bars, because adjusted prices get restated after splits and dividends. Never mix rows fetched at different times. It validates OHLC, records `data_manifest` (hash + warnings) and supplies up to 50 warm-up bars the strategy never sees.
 - **Optimizations:** the grid (≤ `MAX_GRID`) runs on the first 70% (in-sample). `finish_optimization` then queues exactly one out-of-sample run for the best Sharpe (a unique constraint guards against duplicates). Job status is derived from the child runs by `optimization_status`, never stored.
 - **`vault_core/settings.py`**: all config comes from env. Production (`DEBUG` unset) raises `ImproperlyConfigured` without `SECRET_KEY`, `ALLOWED_HOSTS` and DB credentials. Limits live in `settings.VAULT`. `gunicorn.conf.py` can start an in-process consumer thread when `EMBEDDED_WORKER=1`. `start.sh` runs migrations only if `RUN_MIGRATIONS=1`.
-- **Frontend:** `src/api.js` holds the axios client, `errorText` (DRF error → readable text) and `usePoll` (polls until status is in `TERMINAL`). Pages are in `src/pages/`. Deployed on Vercel; the backend is on Render.
+- **Accounts (`backend/accounts/`):** custom `User` (email login; `tier` = guest/unverified/verified drives `quotas.py`). Session-cookie auth with the API on the same origin (Vercel rewrite, Vite proxy, nginx), so there's no CORS. Auth views enforce CSRF even for anonymous requests (`CsrfEnforced`). Every backtester queryset is filtered by `owner=request.user` (built-ins are visible to all); another user's object must 404. `IdempotentCreate` locks the user row with `select_for_update` so quota checks and per-user idempotency keys don't race. `housekeeping.run()` (called hourly by the worker loop) deletes expired guests and sessions. Account tests use `FAST_HASHERS` (MD5) and `BrowserClient`, which echoes the current `csrftoken` the way axios does.
+- **Frontend:** `src/auth.jsx` (AuthProvider, RequireAuth, GuestOnly) mirrors `/api/auth/me/`; a 403 "Authentication credentials…" response signs the user out in the UI. `src/api.js` holds the axios client, `errorText` (DRF error → readable text) and `usePoll` (polls until status is in `TERMINAL`). Pages are in `src/pages/`. Deployed on Vercel; the backend is on Render.
 
 Migrations `0009`–`0011` upgrade v1 databases in place and aren't reversible without data loss.

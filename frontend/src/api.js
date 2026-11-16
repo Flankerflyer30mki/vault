@@ -1,10 +1,29 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
 
+// Same-origin API: Vite (dev), nginx (compose) and Vercel (prod) forward /api to Django, so the session
+// cookie is first-party and there is no CORS. axios echoes the csrftoken cookie in X-CSRFToken on every
+// unsafe request, reading it fresh each time (Django rotates it on login).
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000/api",
+  baseURL: import.meta.env.VITE_API_URL || "/api",
   timeout: 15000,
+  xsrfCookieName: "csrftoken",
+  xsrfHeaderName: "X-CSRFToken",
 });
+
+// Any "not signed in" answer (session expired, signed out in another tab, password changed elsewhere)
+// tells the auth context, which sends the user to the login page.
+export const UNAUTHENTICATED = "vault:unauthenticated";
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const detail = err?.response?.data?.detail;
+    if (err?.response?.status === 403 && typeof detail === "string" && detail.startsWith("Authentication credentials")) {
+      window.dispatchEvent(new Event(UNAUTHENTICATED));
+    }
+    return Promise.reject(err);
+  },
+);
 
 export default api;
 
@@ -14,7 +33,9 @@ export const TERMINAL = ["completed", "failed", "partially_completed"];
 export function errorText(err, fallback = "Request failed") {
   const res = err?.response;
   if (!res) return "Cannot reach the API. Check your connection and try again.";
-  if (res.status === 429) return "Too many requests. Wait a moment and try again.";
+  if (res.status === 429) return res.data?.detail && !/throttled/i.test(res.data.detail)
+    ? res.data.detail // a quota message says which limit was hit
+    : "Too many requests. Wait a moment and try again.";
   if (res.status >= 500) return res.data?.detail || "The server is unavailable. Try again shortly.";
   const d = res.data;
   if (d && typeof d === "object") {

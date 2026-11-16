@@ -367,3 +367,263 @@ h3 {
 .pre {
   white-space: pre-line;
 }
+
+/* ---- accounts, banner, dashboard (Phase 1) ---- */
+.navbar h2 a {
+  color: #fff;
+}
+
+.navbar a.active {
+  color: #fff;
+  border-bottom: 2px solid #4dabf7;
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+.nav-user {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #4dabf7;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.nav-logout {
+  color: #ddd;
+  text-decoration: none;
+}
+
+.banner {
+  background: #2a2410;
+  border-bottom: 1px solid #5c4d16;
+  color: #ffd43b;
+  padding: 10px 30px;
+  font-size: 15px;
+}
+
+.banner a {
+  color: #fff;
+}
+
+.auth-card {
+  max-width: 420px;
+  margin: 20px auto;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 15px;
+}
+
+.auth-form input {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 8px;
+  font: inherit;
+}
+
+.auth-form button,
+.guest-box button,
+a.button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+  font-size: 15px;
+}
+
+.auth-form button:hover,
+.guest-box button:hover,
+a.button:hover {
+  background: #555;
+}
+
+.auth-form button:disabled,
+.guest-box button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.secondary,
+a.button.secondary {
+  background: transparent;
+  border: 1px solid #555;
+}
+
+.auth-form button.danger {
+  background: #7a2424;
+}
+
+.auth-links {
+  margin-top: 14px;
+  font-size: 15px;
+}
+
+.guest-box {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #333;
+}
+
+.success {
+  color: #51cf66;
+}
+
+.account-page .account-section {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid #333;
+}
+
+.tier {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+.tier-verified {
+  border-color: #51cf66;
+  color: #51cf66;
+}
+
+.tier-unverified {
+  border-color: #ffd43b;
+  color: #ffd43b;
+}
+
+.tier-guest {
+  border-color: #adb5bd;
+  color: #adb5bd;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.dash-section {
+  margin-bottom: 30px;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.quota {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.quota span {
+  font-size: 13px;
+}
+
+.quota .progress-bar-outer {
+  height: 8px;
+}
+
+.progress-bar-inner.full {
+  background: #ff6b6b;
+}
+
+.progress-cell {
+  min-width: 160px;
+}
+
+.progress-cell .progress-bar-outer {
+  height: 10px;
+  margin: 0;
+}
+
+.pos {
+  color: #51cf66;
+}
+
+.neg {
+  color: #ff6b6b;
+}
+
+.badge-pos {
+  margin-left: 6px;
+}
+
+.badge-neg {
+  margin-left: 6px;
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.chip-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-list li {
+  border: 1px solid #333;
+  padding: 4px 10px;
+  font-size: 14px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 700px) {
+  .navbar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .nav-spacer {
+    display: none;
+  }
+
+  .content,
+  .banner {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .trade-table {
+    display: block;
+    overflow-x: auto;
+  }
+}

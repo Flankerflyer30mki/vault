@@ -14,6 +14,7 @@ Vault runs a trading strategy against historical daily market data and reports r
 - [Market data](#market-data)
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
 - [Optimization and out-of-sample evaluation](#optimization-and-out-of-sample-evaluation)
+- [Accounts and workspaces](#accounts-and-workspaces)
 - [Security](#security)
 - [Run locally](#run-locally)
 - [Tests](#tests)
@@ -27,9 +28,9 @@ Vault runs a trading strategy against historical daily market data and reports r
 ## Architecture
 
 ```
-Browser ──▶ React/Vite (Vercel)
-               │ HTTPS, JSON
-               ▼
+Browser ──▶ React SPA (Vercel) ── same origin: /api/* is rewritten to Render ──┐
+               session cookie (HttpOnly) + CSRF token, JSON                     │
+               ▼                                                                ▼
          Django REST API (gunicorn, stateless) ──▶ PostgreSQL
                │  validate, throttle, admit,          ▲  strategies, runs (= the job queue),
                │  insert a 'queued' run row           │  trades, bars, results
@@ -43,6 +44,8 @@ Browser ──▶ React/Vite (Vercel)
 ```
 
 The system has two services: an API and a worker. Both are built from the same image and talk to one PostgreSQL database. There is no Kafka, no Redis and no TimescaleDB ([why](#design-decisions)).
+
+The browser never talks to the API's domain directly. Vercel (production), Vite (development) and nginx (the compose image) forward `/api` to Django, so the login cookie is first-party and there is no CORS. Browsers increasingly block cookies sent to a different domain, so this is what makes cookie logins work.
 
 ## Execution model
 
@@ -106,9 +109,11 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | `MAX_CODE_CHARS` | 10 000 | per strategy |
 | `RUN_TIMEOUT_S` / `RUN_CPU_S` / `RUN_MEMORY_MB` | 60 / 30 / 256 | per strategy process |
 | request body | 64 KB | per request |
-| `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per IP, per API process** (in-memory cache) |
-| `NUM_PROXIES` | 1 on Render, else 0 | proxies in front of the API. Throttling identifies the client from the address the last trusted proxy appended, so a client cannot dodge limits by sending its own `X-Forwarded-For` |
-| `Idempotency-Key` header | optional | repeating a `POST /runs/` or `/optimizations/` with the same key returns the original job |
+| `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per user** when signed in, per API process (in-memory cache) |
+| `THROTTLE_AUTH` / `THROTTLE_GUEST` | 10 per min / 5 per hour | **per IP**: login, signup and password reset / guest creation |
+| Per-user quotas | see [Accounts](#accounts-and-workspaces) | active jobs, backtests and optimizations per rolling 24 h, by tier. The API returns `429` naming the limit |
+| `NUM_PROXIES` | 1 on Render, else 0 (compose sets 1 for its nginx) | proxies in front of the API. Throttling identifies the client from the address the last trusted proxy appended, so a client cannot dodge limits by sending its own `X-Forwarded-For` |
+| `Idempotency-Key` header | optional | repeating a `POST /runs/` or `/optimizations/` with the same key returns the original job. Keys are per user |
 
 ## Optimization and out-of-sample evaluation
 
@@ -120,6 +125,23 @@ Picking the best parameters on the same data you then report on overstates perfo
 4. Job status is derived from the child runs and never stored: `running`, `completed`, `partially_completed` (some children failed, or the out-of-sample run failed) or `failed` (no child completed).
 
 The UI labels in-sample results as optimised and shows the out-of-sample result separately, next to buy & hold. A high in-sample Sharpe is not evidence of an edge.
+
+## Accounts and workspaces
+
+Everything a user creates is private. Another user's run, trades or optimization returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
+
+| Tier | How you get it | Active jobs | Backtests / 24 h | Optimizations / 24 h |
+|---|---|---|---|---|
+| guest | "Try it as a guest" (one click, no email) | 2 | 20 | 2 |
+| unverified | sign up, or save a guest workspace as an account | 3 | 30 | 3 |
+| verified | click the link in the verification email | 10 | 200 | 20 |
+
+An optimization counts as one active job while any of its runs is active. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
+
+- **Guests** get a temporary workspace that is deleted after `GUEST_TTL_DAYS` (7) unless they save it as an account. Their data is kept when they do.
+- **Housekeeping:** the worker deletes expired guests and expired sessions once an hour, so no cron job is needed.
+- **Pre-accounts data:** runs, optimizations and custom strategies created before accounts existed belong to a hidden, inactive legacy user (migration `0014`).
+- **Endpoints** (`/api/auth/`): `csrf`, `me`, `signup`, `login`, `logout`, `guest`, `guest/convert`, `verify-email`, `verify-email/resend`, `password-reset`, `password-reset/confirm`, `password-change`, `email-change` and `delete-account`. `/api/dashboard/` returns everything the dashboard shows in one call.
 
 ## Security
 
@@ -134,8 +156,13 @@ For that reason:
 Other security controls:
 
 - Production refuses to start without `SECRET_KEY` and database credentials. `DEBUG` is off unless `DEBUG=1`.
-- `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS` are explicit allowlists.
-- The API serves JSON only. It has no admin, sessions or cookies, so CSRF is not applicable. Errors return safe messages, and details go to the server logs.
+- `ALLOWED_HOSTS` is an explicit allowlist. There is no CORS: the browser reaches the API on the frontend's own origin.
+- **Sessions:** the session cookie is `HttpOnly` (JavaScript, and so XSS, can't read it), `SameSite=Lax`, and `Secure` in production. Logging in issues a new session id (no session fixation). Changing the password signs out every other session.
+- **CSRF:** a double-submit token (`csrftoken` cookie echoed in `X-CSRFToken`) plus Django's Origin check. DRF only checks CSRF for users who are already signed in, so login, signup and the other anonymous endpoints enforce it explicitly. That blocks login CSRF. The token rotates on login.
+- **Passwords:** PBKDF2 (Django's default, 1.2M iterations), at least 10 characters, and Django's similarity, common-password and all-numeric validators.
+- **No account enumeration:** a failed login gives the same message whether or not the email exists, and so does a password reset request.
+- **Email links:** verification and reset tokens are tied to the user's state, so they stop working once used (or when the password or email changes) and expire after 24 hours.
+- The API serves JSON only and has no admin. Errors return safe messages, and details go to the server logs.
 - The Docker image runs as a non-root user.
 - CI runs `pip-audit` and `npm audit`.
 
@@ -147,11 +174,10 @@ Prerequisite: Docker.
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173
-- API: http://localhost:8000/api/strategies/
+- App: http://localhost:5173 (nginx serves the SPA and forwards `/api` to Django)
 - Health: http://localhost:8000/health/ready
 
-Compose starts Postgres 16, the API (which applies migrations on start), one worker and the frontend. Bars are fetched on first use; no ingest step is needed.
+Compose starts Postgres 16, the API (which applies migrations on start), one worker and the frontend. Bars are fetched on first use; no ingest step is needed. In development, emails (verification, password reset) are printed to the API's log instead of being sent.
 
 Without Docker (Python 3.12):
 
@@ -162,7 +188,10 @@ export DEBUG=1 DATABASE_URL=sqlite:///db.sqlite3 ALLOW_CUSTOM_CODE=1
 python manage.py migrate
 python manage.py runserver &          # API
 python manage.py run_worker           # worker, in another shell
+cd ../frontend && npm ci && npm run dev   # http://localhost:5173, proxies /api to :8000
 ```
+
+The worker runs strategies in a POSIX subprocess, so on Windows run the backend in WSL (Ubuntu). The frontend can stay on Windows.
 
 ## Tests
 
@@ -181,10 +210,14 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 - a stop and a target touched in the same bar, a gap through a stop, and an intrabar target
 - sandbox cases: infinite loop, invalid output, exception, blocked imports and dunders, no `open`, huge output
 - data cases: one stored bar not counting as coverage, gap labelling, invalid OHLC rejected, no data, a provider restatement replacing old bars (one price scale), a covered span not downloaded again, a failed fetch keeping stored bars, the fetch day not counted as covered
-- API cases: custom code disabled, end-to-end run, a retry that does not duplicate trades, idempotency key, queue full (503), grid limit
+- API cases: custom code disabled, end-to-end run, a retry that does not duplicate trades, idempotency key, queue full (503), grid limit, per-user job throttle, anonymous requests rejected
+- accounts: signup, login, logout, CSRF required even for anonymous login, CSRF rotation on login, session rotation, verification link (works once), password reset without account enumeration, password change signing out other sessions, email change re-verification, weak passwords rejected, guest flow and conversion, account deletion, per-IP auth and guest throttles with spoofed `X-Forwarded-For`
+- isolation: other users' runs, trades and optimizations return 404; lists and dashboard show only your own items; you can't use another user's strategy; idempotency keys are per user
+- quotas: guest active-job limit, rolling 24-hour daily limit, an optimization counting as one job, verification raising limits, env overrides
+- housekeeping (expired guests and sessions), a worker finishing a run whose owner was deleted, and the legacy-data migration (0014)
 - stale-job requeue and then fail, and an optimization still finishing when its last in-sample run fails that way
 - the worker loop recycling database connections and surviving recovery errors
-- a spoofed `X-Forwarded-For` not bypassing throttling, the optimization list not loading equity curves, a stop tighter than slippage rejected
+- the optimization list not loading equity curves, a stop tighter than slippage rejected
 - partial optimization failure with exactly one out-of-sample run
 - health endpoints
 
@@ -192,7 +225,7 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 
 Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Turn on Render's "auto-deploy after CI checks pass" so a red build does not ship.
 
-**Frontend (Vercel):** root `frontend/`, build `npm run build`, output `dist/`. Set `VITE_API_URL=https://<render-api-host>/api`. This value is public configuration, not a secret.
+**Frontend (Vercel):** root `frontend/`, build `npm run build`, output `dist/`. **Replace `VAULT_API_HOST` in `frontend/vercel.json` with the Render API host** (e.g. `vault-api.onrender.com`). That rewrite is what makes `/api` same-origin. Don't set `VITE_API_URL`.
 
 **API (Render web service, Docker, root `backend/`):**
 
@@ -201,7 +234,9 @@ Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Tu
 | Start command | default image `CMD` (`./start.sh`, which runs gunicorn) |
 | Pre-deploy command | `python manage.py migrate --noinput` (if your plan has it). Otherwise set `RUN_MIGRATIONS=1` on a **single-instance** service |
 | Health check path | `/health/ready` |
-| Env | `SECRET_KEY` (generate), `DATABASE_URL` (from Render Postgres), `ALLOWED_HOSTS=<api-host>`, `CORS_ALLOWED_ORIGINS=https://<vercel-domain>`, `SECURE_PROXY_SSL_HEADER=1`, `DB_SSLMODE=require` |
+| Env | `SECRET_KEY` (generate), `DATABASE_URL` (from Render Postgres), `ALLOWED_HOSTS=<api-host>`, `CSRF_TRUSTED_ORIGINS=https://<vercel-domain>`, `FRONTEND_URL=https://<vercel-domain>` (links in emails), `SECURE_PROXY_SSL_HEADER=1`, `DB_SSLMODE=require` |
+| Email | `EMAIL_HOST`, `EMAIL_PORT` (587), `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` (any SMTP provider, e.g. Resend). Without `EMAIL_HOST`, emails go to the log |
+| Check on staging | `NUM_PROXIES`: requests now arrive through Vercel and then Render's proxy. Inspect a real `X-Forwarded-For` chain and set the count to match |
 | Optional | `SECURE_HSTS_SECONDS=31536000` once HTTPS is verified, `WEB_CONCURRENCY`, and the limits listed above |
 
 **Worker (Render background worker, same repo and image):** command `python manage.py run_worker`, with the same env as the API minus the HTTP-only settings.
@@ -263,7 +298,8 @@ After deploy, watch Logs and Events for the same signature over several hours be
 ## Known limitations
 
 - There is no isolated strategy runner yet, so custom code is disabled on public deployments (see [Security](#security)).
-- There is no authentication, so quotas are per IP, not per user. Throttle counters are per API process.
+- Throttle counters are per API process (in-memory cache). Use a shared cache if you run more than one API instance.
+- No "Sign in with Google" yet, and no multi-factor authentication.
 - Admission control (`MAX_ACTIVE_RUNS`) is a soft cap: concurrent requests can overshoot it slightly.
 - Strategies are long only, single asset, daily bars, with no shorting, leverage, dividends-as-cash or order types beyond market-on-open and stop/target.
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built.
