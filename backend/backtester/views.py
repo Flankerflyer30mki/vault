@@ -13,11 +13,17 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts import quotas
+from backtester import costs, spec
 from backtester.engine import ENGINE_VERSION
-from backtester.jobs import code_hash, optimization_status
+from backtester.jobs import frozen_strategy, optimization_status
 from backtester.models import BacktestRun, OptimizationJob, Strategy, Trade
 from backtester.serializers import (BacktestRunSerializer, OptimizationJobSerializer, RunWithCurveSerializer,
-                                    StrategySerializer, TradeSerializer)
+                                    SpecPreviewSerializer, StrategySerializer, TradeSerializer)
+
+
+class Conflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "conflict"
 
 
 class QueueFull(APIException):
@@ -76,9 +82,69 @@ class StrategyListCreateView(Throttled, generics.ListCreateAPIView):
             .order_by("-is_builtin", "-created_at")
 
     def perform_create(self, serializer):
-        if not settings.VAULT["ALLOW_CUSTOM_CODE"]:
-            raise PermissionDenied("Custom strategy code is disabled on this deployment; use a built-in strategy.")
-        serializer.save(owner=self.request.user, is_builtin=False)
+        _check_code_allowed(serializer.validated_data.get("kind"))
+        with transaction.atomic():
+            # Same pattern as job creation: lock the user's row so two concurrent saves can't both pass the limit.
+            get_user_model().objects.select_for_update().get(pk=self.request.user.pk)
+            quotas.check_strategy(self.request.user)
+            serializer.save(owner=self.request.user, is_builtin=False)
+
+
+def _check_code_allowed(kind):
+    if kind == Strategy.CODE and not settings.VAULT["ALLOW_CUSTOM_CODE"]:
+        raise PermissionDenied("Custom strategy code is disabled on this deployment; use the strategy builder.")
+
+
+class StrategyDetailView(Throttled, generics.RetrieveUpdateDestroyAPIView):
+    """Read any visible strategy; change or delete only your own. Built-ins are read-only templates."""
+    write_scope = "write"
+    serializer_class = StrategySerializer
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return Strategy.objects.filter(quotas.visible_strategies_q(self.request.user))
+
+    def _own(self):
+        obj = self.get_object()
+        if obj.owner_id != self.request.user.id:
+            raise PermissionDenied("Built-in strategies are read-only. Use one as a template to make your own.")
+        return obj
+
+    def perform_update(self, serializer):
+        self._own()
+        _check_code_allowed(serializer.instance.kind)
+        serializer.save()  # past runs keep their frozen copy, so editing never changes old results
+
+    def perform_destroy(self, instance):
+        self._own()
+        n = instance.runs.count()
+        if n:
+            raise Conflict(f"This strategy has {n} backtest runs. It's kept so those results stay reproducible.")
+        instance.delete()
+
+
+class StrategyCatalogView(Throttled, APIView):
+    """What the builder form offers: indicators, operators, limits, cost models, suggested symbols."""
+
+    def get(self, request):
+        return Response({**spec.catalog(),
+                         "cost_models": [{"id": k, "label": v} for k, v in costs.COST_MODELS.items()],
+                         "india_rates": {k: str(v) for k, v in costs.india_delivery()[2].items()},
+                         "suggested_symbols": costs.SUGGESTED_SYMBOLS,
+                         "custom_code_enabled": settings.VAULT["ALLOW_CUSTOM_CODE"]})
+
+
+class SpecPreviewView(Throttled, APIView):
+    """Validate a spec without saving it; returns the normalised spec, its Python rendering and warm-up.
+    The builder calls this as the user types, so it shares the generous read limit."""
+    write_scope = "read"
+
+    def post(self, request):
+        ser = SpecPreviewSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        s = ser.validated_data["spec"]
+        return Response({"spec": s, "python": spec.render_python(s), "warmup_bars": spec.warmup_bars(s),
+                         "hash": spec.spec_hash(s)})
 
 
 class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
@@ -93,8 +159,7 @@ class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreate
     def perform_create(self, serializer, key):
         quotas.check(self.request.user, "run")
         admit(1)
-        code = serializer.validated_data["strategy"].code
-        return serializer.save(owner=self.request.user, strategy_code=code, strategy_hash=code_hash(code),
+        return serializer.save(owner=self.request.user, **frozen_strategy(serializer.validated_data["strategy"]),
                                engine_version=ENGINE_VERSION, idempotency_key=key)
 
 
@@ -130,12 +195,14 @@ class OptimizationJobListCreateView(Throttled, IdempotentCreate, generics.ListCr
         grid = list(product(d["stop_loss_options"], d["take_profit_options"]))
         admit(len(grid) + 1)  # +1: the out-of-sample run
         job = serializer.save(owner=self.request.user, idempotency_key=key)
-        code = job.strategy.code
+        frozen = frozen_strategy(job.strategy)
+        # Flat: the model's default fee. India: statutory charges with zero brokerage (a discount broker's delivery).
+        buy, sell = costs.rates(job.cost_model, Decimal("0.001") if job.cost_model == costs.FLAT else 0)
         BacktestRun.objects.bulk_create([BacktestRun(
             owner=self.request.user, strategy=job.strategy, optimization=job, sample="in", symbol=job.symbol,
             start_date=job.start_date, end_date=job.split_date - timedelta(days=1), starting_cash=job.starting_cash,
-            stop_loss_pct=Decimal(sl), take_profit_pct=Decimal(tp),
-            strategy_code=code, strategy_hash=code_hash(code), engine_version=ENGINE_VERSION,
+            stop_loss_pct=Decimal(sl), take_profit_pct=Decimal(tp), cost_model=job.cost_model,
+            commission_pct=buy, sell_commission_pct=sell, **frozen, engine_version=ENGINE_VERSION,
         ) for sl, tp in grid])
         return job
 
@@ -159,7 +226,8 @@ def _run_summary(r):
     total = None
     if r.final_value is not None and r.starting_cash:
         total = float(r.final_value / r.starting_cash - 1)
-    return {"id": r.id, "strategy_name": r.strategy.name, "symbol": r.symbol, "status": r.status,
+    return {"id": r.id, "strategy_name": r.strategy.name, "symbol": r.symbol, "currency": costs.currency(r.symbol),
+            "status": r.status,
             "start_date": r.start_date, "end_date": r.end_date, "created_at": r.created_at,
             "bars_processed": r.bars_processed, "bars_total": r.bars_total, "total_return": total,
             "buy_and_hold_return": r.buy_and_hold_return, "sharpe_ratio": r.sharpe_ratio,
@@ -204,6 +272,7 @@ class DashboardView(Throttled, APIView):
             "active_runs": [_run_summary(r) for r in active],
             "recent_runs": [_run_summary(r) for r in recent],
             "optimizations": optimizations,
-            "strategies": [{"id": s.id, "name": s.name, "is_builtin": s.is_builtin} for s in strategies[:20]],
+            "strategies": [{"id": s.id, "name": s.name, "kind": s.kind, "is_builtin": s.is_builtin}
+                           for s in strategies.only("id", "name", "kind", "is_builtin")[:20]],
             "custom_code_enabled": settings.VAULT["ALLOW_CUSTOM_CODE"],
         })

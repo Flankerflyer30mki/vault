@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 PROVIDER = {"provider": "yahoo", "adjusted": True, "interval": "1d"}
 MAX_GAP_DAYS = 5      # longest normal weekend + holiday run; longer gaps are reported
 EDGE_SLACK_DAYS = 5
-WARMUP_CALENDAR_DAYS = WARMUP_BARS * 2  # ~100 calendar days covers 50 trading days
+WARMUP_CALENDAR_PER_BAR = 2  # ~2 calendar days per trading day covers weekends and holidays
 
 
 class DataError(Exception):
@@ -122,24 +122,25 @@ def _refresh(symbol, start, end, fetch):
     return rejected
 
 
-def load_bars(symbol, start, end, fetch=download):
+def load_bars(symbol, start, end, fetch=None, warmup_bars=WARMUP_BARS):
     """Returns (warmup_bars, bars, manifest). Fetches from the provider only when the span was never fetched.
-    Partial data is allowed but labelled in manifest['warnings']; no bars at all raises DataError."""
+    Partial data is allowed but labelled in manifest['warnings']; no bars at all raises DataError.
+    warmup_bars: bars needed before `start` (50 for code strategies; builder strategies ask for their longest lookback)."""
     end = min(end, datetime.now(UTC).date())
-    warm_start = start - timedelta(days=WARMUP_CALENDAR_DAYS)
+    warm_start = start - timedelta(days=warmup_bars * WARMUP_CALENDAR_PER_BAR)
     rejected = 0
     if not _covered(symbol, warm_start, end):
-        rejected = _refresh(symbol, warm_start, end, fetch)
+        rejected = _refresh(symbol, warm_start, end, fetch or download)  # looked up per call so tests can patch it
 
     rows = _query(symbol, warm_start, end)
-    warmup = [b for b in rows if b.ts.date() < start][-WARMUP_BARS:]
+    warmup = [b for b in rows if b.ts.date() < start][-warmup_bars:]
     bars = [b for b in rows if b.ts.date() >= start]
     if not bars:
         raise DataError(f"No market data for '{symbol}' between {start} and {end}. Check the ticker.")
 
     warnings = coverage_warnings(bars, start, end)
-    if len(warmup) < WARMUP_BARS:
-        warnings.append(f"only {len(warmup)} warm-up bars before start; SMA-{WARMUP_BARS} starts late")
+    if len(warmup) < warmup_bars:
+        warnings.append(f"only {len(warmup)} of {warmup_bars} warm-up bars before start; indicators start late")
     if rejected:
         warnings.append(f"{rejected} provider rows rejected (invalid OHLC)")
     digest = hashlib.sha256("".join(f"{b.ts.date()},{b.open},{b.high},{b.low},{b.close};" for b in warmup + bars)

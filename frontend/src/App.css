@@ -627,3 +627,174 @@ a.button.secondary {
     overflow-x: auto;
   }
 }
+
+/* ---- strategy builder (Phase 2) ---- */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.badge-kind {
+  border-color: #4dabf7;
+  color: #4dabf7;
+}
+
+.strategy-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+
+button.small,
+a.button.small {
+  padding: 4px 10px;
+  font-size: 13px;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.builder form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 980px;
+}
+
+.builder label,
+.builder-name {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.builder input,
+.builder select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.builder input[aria-invalid="true"] {
+  border-color: #ff6b6b;
+}
+
+.group {
+  border: 1px solid #333;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group legend {
+  color: #eee;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.conditions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.condition {
+  border: 1px solid #2c2c2c;
+  background: #181818;
+  padding: 10px;
+}
+
+.condition.has-error {
+  border-color: #ff6b6b;
+}
+
+.condition-summary {
+  margin: 0 0 8px;
+  color: #eee;
+  font-size: 14px;
+}
+
+.condition-fields,
+.operand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.operand {
+  padding: 6px;
+  border: 1px dashed #333;
+}
+
+.builder .param {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.builder .param input {
+  width: 72px;
+}
+
+.field-error {
+  display: block;
+  color: #ff6b6b;
+  font-size: 13px;
+  width: 100%;
+}
+
+.preview pre {
+  white-space: pre;
+  overflow-x: auto;
+  background: #111;
+  border: 1px solid #333;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.builder-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.builder-actions button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 10px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.group > button.secondary {
+  align-self: flex-start;
+  color: #ddd;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.group > button:disabled,
+.condition button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 700px) {
+  .condition-fields,
+  .operand {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

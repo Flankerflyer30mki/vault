@@ -19,7 +19,7 @@ from django.conf import settings
 from django.db import IntegrityError, close_old_connections, transaction
 from django.utils import timezone
 
-from backtester import engine
+from backtester import engine, spec
 from backtester.data_fetch import DataError, load_bars
 from backtester.models import BacktestRun, OptimizationJob, Trade
 from backtester.sandbox_runner import StrategyProcess
@@ -36,6 +36,13 @@ def worker_id():
 
 def code_hash(code):
     return hashlib.sha256(code.encode()).hexdigest()
+
+
+def frozen_strategy(strategy):
+    """The run's own copy of what it will execute. Editing the strategy later never changes this run."""
+    if strategy.kind == "builder":
+        return {"strategy_code": "", "strategy_spec": strategy.spec, "strategy_hash": spec.spec_hash(strategy.spec)}
+    return {"strategy_code": strategy.code, "strategy_spec": None, "strategy_hash": code_hash(strategy.code)}
 
 
 def claim(wid):
@@ -65,8 +72,10 @@ def execute(run, wid):
     t0 = time.monotonic()
     log.info("event=run_started run=%s attempt=%s strategy_hash=%s", run.id, run.attempts, run.strategy_hash[:12])
     cfg = settings.VAULT
+    builder = run.strategy_spec is not None
     try:
-        warmup, bars, manifest = load_bars(run.symbol, run.start_date, run.end_date)
+        warmup, bars, manifest = load_bars(run.symbol, run.start_date, run.end_date, warmup_bars=(
+            spec.warmup_bars(run.strategy_spec) if builder else engine.WARMUP_BARS))
     except DataError as e:
         return fail(run, wid, "data", str(e))
     if not _update(run, wid, status=R.RUNNING, bars_total=len(bars), bars_processed=0,
@@ -78,6 +87,7 @@ def execute(run, wid):
         commission_pct=Decimal(run.commission_pct), slippage_pct=Decimal(run.slippage_pct),
         stop_loss_pct=run.stop_loss_pct and Decimal(run.stop_loss_pct),
         take_profit_pct=run.take_profit_pct and Decimal(run.take_profit_pct),
+        sell_commission_pct=None if run.sell_commission_pct is None else Decimal(run.sell_commission_pct),
     )
     series = [{"ts": b.ts, "open": b.open, "high": b.high, "low": b.low, "close": b.close, "volume": b.volume}
               for b in warmup + bars]
@@ -88,12 +98,19 @@ def execute(run, wid):
 
     proc = None
     try:
-        proc = StrategyProcess(run.strategy_code, cfg["RUN_TIMEOUT_S"], cfg["RUN_CPU_S"], cfg["RUN_MEMORY_MB"])
+        if builder:
+            # Interpreted in-process: the spec is data validated against an allowlist, so no sandbox is needed.
+            try:
+                decide = spec.compile_decide(spec.validate(run.strategy_spec), series)
+            except spec.SpecError as e:
+                raise engine.StrategyError(f"Invalid strategy spec: {e}") from None
+        else:
+            proc = StrategyProcess(run.strategy_code, cfg["RUN_TIMEOUT_S"], cfg["RUN_CPU_S"], cfg["RUN_MEMORY_MB"])
 
-        def decide(bar, indicators):
-            wire = {"date": bar["ts"].date().isoformat(), **{k: float(bar[k]) for k in ("open", "high", "low", "close")},
-                    "volume": bar["volume"]}
-            return proc.decide(wire, indicators)
+            def decide(bar, indicators):
+                wire = {"date": bar["ts"].date().isoformat(),
+                        **{k: float(bar[k]) for k in ("open", "high", "low", "close")}, "volume": bar["volume"]}
+                return proc.decide(wire, indicators)
 
         result = engine.simulate(series, decide, params, warmup=len(warmup), on_progress=progress)
     except engine.StrategyError as e:
@@ -159,9 +176,11 @@ def finish_optimization(job):
                 owner_id=job.owner_id, strategy_id=best.strategy_id, optimization=job, sample="out", symbol=best.symbol,
                 start_date=job.split_date, end_date=job.end_date, starting_cash=best.starting_cash,
                 max_position_pct=best.max_position_pct, commission_pct=best.commission_pct,
+                sell_commission_pct=best.sell_commission_pct, cost_model=best.cost_model,
                 slippage_pct=best.slippage_pct, stop_loss_pct=best.stop_loss_pct,
                 take_profit_pct=best.take_profit_pct, strategy_code=best.strategy_code,
-                strategy_hash=best.strategy_hash, engine_version=engine.ENGINE_VERSION)
+                strategy_spec=best.strategy_spec, strategy_hash=best.strategy_hash,
+                engine_version=engine.ENGINE_VERSION)
     except IntegrityError:
         pass  # another worker already queued it
 

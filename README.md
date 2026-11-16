@@ -1,8 +1,8 @@
 # Vault: a strategy backtester you can check
 
-Vault runs a trading strategy against historical daily market data and reports results that you can reconcile by hand. You write `on_bar(bar, indicators, state)` returning `BUY`, `SELL` or `HOLD`. Vault replays the history one bar at a time with a documented fill model, and it records enough metadata (code hash, data hash, engine version) to reproduce each run.
+Vault runs a trading strategy against historical daily market data and reports results that you can reconcile by hand. You build a strategy from rules in a form (for example "buy when EMA 12 crosses above EMA 26 and RSI 14 is below 70"), or, where custom code is enabled, write `on_bar(bar, indicators, state)` returning `BUY`, `SELL` or `HOLD`. Vault replays the history one bar at a time with a documented fill model, and it records enough metadata (spec or code hash, data hash, engine version) to reproduce each run. US and Indian (NSE/BSE) symbols are supported, with an Indian delivery cost model.
 
-**Live demo:** [vault-lovat-beta.vercel.app](https://vault-lovat-beta.vercel.app). The public demo runs **built-in strategies only**. See [Security](#security) for the reason.
+**Live demo:** [vault-lovat-beta.vercel.app](https://vault-lovat-beta.vercel.app). The public demo runs **built-in and builder strategies**; custom Python is off. See [Security](#security) for the reason.
 
 ---
 
@@ -10,7 +10,9 @@ Vault runs a trading strategy against historical daily market data and reports r
 
 - [Architecture](#architecture)
 - [Execution model](#execution-model)
+- [Strategy builder](#strategy-builder)
 - [Accounting and metrics](#accounting-and-metrics)
+- [Costs and markets](#costs-and-markets)
 - [Market data](#market-data)
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
 - [Optimization and out-of-sample evaluation](#optimization-and-out-of-sample-evaluation)
@@ -39,8 +41,10 @@ Browser ──▶ React SPA (Vercel) ── same origin: /api/* is rewritten to 
                │  claim with SELECT … FOR UPDATE SKIP LOCKED,
                │  load and validate bars (fetch from Yahoo when coverage is incomplete),
                │  run the deterministic engine, then commit trades and results in one transaction
+               │
+               ├─ builder strategy: JSON spec interpreted in-process (spec.py + indicators.py; no code runs)
                ▼
-         Strategy subprocess (one per run): rlimits, empty environment, wall-clock deadline
+         code strategy only: subprocess per run (rlimits, empty environment, wall-clock deadline)
 ```
 
 The system has two services: an API and a worker. Both are built from the same image and talk to one PostgreSQL database. There is no Kafka, no Redis and no TimescaleDB ([why](#design-decisions)).
@@ -53,14 +57,49 @@ The rules below are implemented in `backend/backtester/engine.py`, and the tests
 
 | Rule | Behaviour |
 |---|---|
-| Signal time | The strategy sees bar *t*, including its close. SMA-10 and SMA-50 are computed from closes up to and including bar *t*. |
+| Signal time | The strategy sees bar *t*, including its close. Every indicator is computed from bars up to and including bar *t* (code strategies get SMA-10 and SMA-50; builder strategies get the indicators their spec names). |
 | Fill time | A decision made on bar *t* fills at the **open of bar *t+1***. A decision on the last bar never fills. |
 | Stops / targets | These are checked against each bar's high and low while a position is open. If the bar opens past the level (a gap), the fill is at the open. If the level is touched during the bar, the fill is at the level. **If both levels are touched in one bar, Vault assumes the stop filled** (the conservative choice). The API rejects a stop-loss that is not larger than the slippage: entry fills at `open × (1 + slippage)`, so a tighter stop would sit above the open and stop out every entry on its first bar. |
-| Position | Long only, one position at a time. Fractional shares are rounded down to 1e-6. |
-| Sizing | `qty = cash × max_position_pct / (fill_price × (1 + commission))`. The commission is part of the budget, so cash never goes negative. |
-| Costs | Slippage moves the fill price against you. Commission is charged on each fill's notional. Each is charged exactly once. |
+| Position | **Long only** (fully in the stock or in cash), one position at a time. Fractional shares are rounded down to 1e-6. Shorting is deliberately not modelled: Indian retail traders can't hold a short position overnight in the cash market (decision D-036). |
+| Sizing | `qty = cash × max_position_pct / (fill_price × (1 + buy_commission))`. The commission is part of the budget, so cash never goes negative. |
+| Costs | Slippage moves the fill price against you. Commission is charged on each fill's notional, with separate buy and sell rates (see [Costs and markets](#costs-and-markets)). Each is charged exactly once. |
 | End of run | An open position is **marked to market** at the last close. It is not liquidated. |
-| Warm-up | Up to 50 bars before `start_date` feed the indicators. The strategy never sees those bars. |
+| Warm-up | Bars before `start_date` feed the indicators; the strategy never sees them. Code strategies get 50. Builder strategies get the longest lookback their spec needs (smoothed indicators get 3× their period so the starting seed fades), capped at 600. The manifest records the number used and warns when history is shorter. |
+
+## Strategy builder
+
+A builder strategy is a **JSON spec**, validated against an allowlist and **interpreted** by the engine. It is never turned into code and never executed, so it runs on public deployments where custom Python is off.
+
+```json
+{"version": 1,
+ "entry": {"all": [{"left": {"ind": "ema", "params": {"period": 12}}, "op": "crosses_above",
+                    "right": {"ind": "ema", "params": {"period": 26}}},
+                   {"left": {"ind": "rsi", "params": {"period": 14}}, "op": "<", "right": {"const": 70}}]},
+ "exit":  {"any": [{"left": {"price": "close"}, "op": "<", "right": {"ind": "sma", "params": {"period": 200}}}]}}
+```
+
+- **Signals:** on each bar, `SELL` if the exit group is true, otherwise `BUY` if the entry group is true, otherwise `HOLD`. When both are true, **exit wins** (conflicting signals keep a flat strategy out).
+- **Groups:** `all` (AND) or `any` (OR), 1–10 conditions each, no nesting.
+- **Operands:** an indicator, a price field (`open`, `high`, `low`, `close`, `volume`) or a number. Comparing two numbers is rejected.
+- **Operators:** `>`, `<`, `>=`, `<=`, `crosses_above` (previous bar `a ≤ b`, this bar `a > b`), `crosses_below`. A condition touching a missing value (an indicator still warming up) is false.
+- **Indicators** (periods 2–200; `backend/backtester/indicators.py`):
+
+| Indicator | Params | Outputs | Convention |
+|---|---|---|---|
+| `sma` | period | value | arithmetic mean; same arithmetic as the code strategies' `sma_N` |
+| `ema` | period | value | seeded with the SMA of the first *n* values, then α = 2/(n+1) |
+| `rsi` | period | value | Wilder smoothing (α = 1/n); flat prices give 50 |
+| `macd` | fast, slow, signal | line, signal, hist | EMA(fast) − EMA(slow); signal is an EMA of the line |
+| `bbands` | period, std | upper, middle, lower | population standard deviation |
+| `atr` | period | value | Wilder-smoothed true range (includes gaps) |
+| `donchian` | period | upper, lower | the *n* bars **before** the current one, so `close > upper` is a breakout |
+| `roc` | period | value | percent: `100 × (close / close[n] − 1)` |
+
+- **Validation** reports every problem at once, keyed by path (`entry.all[0].left.params.period`), and the UI shows each message on its field. Unknown keys, booleans posing as numbers, NaN and specs over 8 KB are rejected.
+- **Reproducibility:** each run stores a frozen copy of the spec and the SHA-256 of its canonical JSON (sorted keys). Editing a strategy never changes past runs. A strategy that has runs can't be deleted (`409`).
+- **"View as Python"** renders the spec as readable Python for people. Vault never executes that text.
+- **Templates:** six built-in builder strategies (migration `0017`): EMA crossover, RSI mean reversion, MACD signal cross, Bollinger breakout, Donchian breakout and trend-filtered RSI. Built-ins are read-only; "Use as template" copies one into your workspace.
+- **Endpoints:** `GET/POST /api/strategies/`, `GET/PATCH/DELETE /api/strategies/<id>/`, `GET /api/strategies/catalog/` (indicators, operators, limits, cost models, suggested symbols; the form is built from this, so the allowlist lives in one place), `POST /api/strategies/preview/` (validate and render without saving; the form calls it as you type).
 
 ## Accounting and metrics
 
@@ -73,6 +112,25 @@ The rules below are implemented in `backend/backtester/engine.py`, and the tests
 - **Win rate** is calculated per round trip, **net of commission and slippage**. It is `null` when no round trip has closed.
 - **Buy & hold** is a gross benchmark: first open to last close over the same bars.
 - A completed run with no trades still produces a valid flat equity curve and metrics.
+
+## Costs and markets
+
+Each run has a `cost_model`:
+
+- **`flat`** (default): `commission_pct` on every buy and sell.
+- **`india_delivery`** (NSE/BSE symbols only): `commission_pct` is your broker's brokerage, and the server adds the statutory charges per side. The run stores the resulting buy and sell rates.
+
+| Charge (equity delivery) | Rate | Side |
+|---|---|---|
+| STT | 0.1% | buy and sell |
+| NSE transaction charge | 0.00297% | buy and sell |
+| SEBI turnover fee | ₹10 per crore (0.0001%) | buy and sell |
+| Stamp duty | 0.015% | buy only |
+| GST | 18% of brokerage + transaction charge + SEBI fee | buy and sell |
+
+With zero brokerage that is **0.1186226% per buy and 0.1036226% per sell** (₹118.62 and ₹103.62 on ₹1,00,000). Rates live in `backend/backtester/costs.py`; they change from time to time, so check current exchange circulars before relying on them. Flat per-order charges (DP charges on sells, minimum brokerage) are not modelled. Optimizations take a cost model too: flat uses 0.1%, India uses zero brokerage plus the statutory charges.
+
+**Currency** is inferred from the symbol and only used for display: `.NS`/`.BO` and Indian indices (`^NSEI`, `^NSEBANK`, `^BSESN`, …) are INR, plain US tickers are USD, other exchange suffixes are shown without a currency sign. The symbol field suggests common NSE stocks and indices.
 
 ## Market data
 
@@ -106,7 +164,8 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | `MAX_GRID` | 25 combinations | per optimization, checked server-side |
 | up to 10 values | per stop-loss / take-profit list | per request |
 | `MAX_RANGE_DAYS` | 3660 | per request |
-| `MAX_CODE_CHARS` | 10 000 | per strategy |
+| `MAX_CODE_CHARS` | 10 000 | per code strategy |
+| builder spec | 1–10 conditions per group, periods 2–200, 8 KB, warm-up ≤ 600 bars | per builder strategy |
 | `RUN_TIMEOUT_S` / `RUN_CPU_S` / `RUN_MEMORY_MB` | 60 / 30 / 256 | per strategy process |
 | request body | 64 KB | per request |
 | `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per user** when signed in, per API process (in-memory cache) |
@@ -130,13 +189,13 @@ The UI labels in-sample results as optimised and shows the out-of-sample result 
 
 Everything a user creates is private. Another user's run, trades or optimization returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
 
-| Tier | How you get it | Active jobs | Backtests / 24 h | Optimizations / 24 h |
-|---|---|---|---|---|
-| guest | "Try it as a guest" (one click, no email) | 2 | 20 | 2 |
-| unverified | sign up, or save a guest workspace as an account | 3 | 30 | 3 |
-| verified | click the link in the verification email | 10 | 200 | 20 |
+| Tier | How you get it | Active jobs | Backtests / 24 h | Optimizations / 24 h | Saved strategies |
+|---|---|---|---|---|---|
+| guest | "Try it as a guest" (one click, no email) | 2 | 20 | 2 | 5 |
+| unverified | sign up, or save a guest workspace as an account | 3 | 30 | 3 | 20 |
+| verified | click the link in the verification email | 10 | 200 | 20 | 100 |
 
-An optimization counts as one active job while any of its runs is active. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
+An optimization counts as one active job while any of its runs is active. Built-in strategies don't count towards saved strategies. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
 
 - **Guests** get a temporary workspace that is deleted after `GUEST_TTL_DAYS` (7) unless they save it as an account. Their data is kept when they do.
 - **Housekeeping:** the worker deletes expired guests and expired sessions once an hour, so no cron job is needed.
@@ -149,7 +208,7 @@ An optimization counts as one active job while any of its runs is active. Every 
 
 For that reason:
 
-- `ALLOW_CUSTOM_CODE` is **off by default**. With it off, `POST /api/strategies/` returns `403` and only `is_builtin` strategies can run. The built-in strategies are seeded by migration `0010`.
+- `ALLOW_CUSTOM_CODE` is **off by default**. With it off, creating a **code** strategy returns `403` and only built-in code strategies can run. **Builder strategies are always allowed**: a spec is data checked against an allowlist and interpreted by the engine, so no user input ever becomes code (decision D-033). The built-in code strategies are seeded by migration `0010` and the builder templates by `0017`.
 - Docker Compose turns it **on for local use only**.
 - Before enabling it on a public deployment, move strategy execution to a separate isolated runner: a container or VM with no network, a read-only root filesystem, a non-root user, dropped capabilities, CPU, memory and PID limits, no Docker socket, and no database or application secrets. The worker would send it only the code and the bars. This runner is **not built yet**.
 
@@ -198,9 +257,10 @@ The worker runs strategies in a POSIX subprocess, so on Windows run the backend 
 ```bash
 cd backend
 DEBUG=1 DATABASE_URL=sqlite:///:memory: python manage.py test
+cd ../frontend && npm test        # Vitest + React Testing Library (jsdom)
 ```
 
-CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pip-audit`, frontend lint and build, `npm audit` and both Docker builds. The suite covers:
+CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pip-audit`, frontend lint, tests and build, `npm audit` and both Docker builds. Measured results for every phase are in [docs/evals.md](docs/evals.md). The suite covers:
 
 - a hand-calculated buy/sell with commission and slippage
 - the equity = cash + holdings invariant
@@ -220,6 +280,13 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 - the optimization list not loading equity curves, a stop tighter than slippage rejected
 - partial optimization failure with exactly one out-of-sample run
 - health endpoints
+- builder indicators: hand-computed values, plus pandas as an independent reference for SMA, EMA, RSI, ATR, Bollinger, Donchian and ROC
+- **no look-ahead (metamorphic test):** rewriting every bar after *t* changes no indicator value or decision at or before *t*
+- **parity (differential test):** the builder version of "SMA Crossover (10/50)" makes exactly the same trades and equity curve as the Python built-in
+- spec validation (every error reported with its path), canonical hashing, warm-up, signals (crossovers, exit wins, missing values), read-only Python rendering
+- India costs hand-calculated, the engine charging the sell rate on sells, currency inference
+- builder API: create with custom code off, edit and delete rules, saved-strategy limit, catalog and preview, an end-to-end run that freezes the spec and is deterministic on re-run, an India-cost run and optimization; no test may reach the real data provider
+- frontend: form ↔ spec round trip, the builder page (indicator parameters, condition limit, numbers saved as numbers, server errors on the exact field, templates), money formatting
 
 ## Deploy (Vercel + Render)
 
@@ -302,6 +369,9 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - No "Sign in with Google" yet, and no multi-factor authentication.
 - Admission control (`MAX_ACTIVE_RUNS`) is a soft cap: concurrent requests can overshoot it slightly.
 - Strategies are long only, single asset, daily bars, with no shorting, leverage, dividends-as-cash or order types beyond market-on-open and stop/target.
+- Builder specs have flat AND/OR groups (no nesting) and eight indicators. Smoothed indicators (EMA, RSI, ATR, MACD) depend slightly on how much history precedes the start date, as in any charting tool.
+- The India cost model covers percentage charges only (no DP charges or minimum brokerage), and its rates are fixed in code. Currency is inferred from the symbol for display only.
+- Rolling back migration `0016` rounds 9-decimal fee rates to 6 places and leaves builder strategies with no code.
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
 - No load test has been run, so there are no capacity numbers.

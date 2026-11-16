@@ -17,6 +17,7 @@ python manage.py test -v 2 --durations 0 --timing
 | Baseline (before Phase 0) | 2026-11-16 | 27 | — | — | not measured | not measured | — | — |
 | 0 | 2026-11-16 | 38 | 38 | 0 | 4.136 s | 3.838 s | 1.316 s | 5.987 s |
 | 1 | 2026-11-16 | 70 | 70 | 0 | 7.531 s | 5.864 s | 1.477 s | 9.935 s |
+| 2 | 2026-11-16 | 104 backend + 13 frontend | 117 | 0 | 11.900 s | 11.901 s | 1.886 s | 14.959 s |
 
 ## Phase 0 · CI checks (run locally, matching `.github/workflows/ci.yml`)
 | Check | Result |
@@ -216,3 +217,124 @@ Django `runserver` and `run_worker` on Postgres, the Vite dev server forwarding 
 - **Isolation and quota tests are the slowest account tests** because they really run backtests through the worker. That's deliberate: they check end to end, not just the querysets.
 - **The migration test is the slowest account test (0.5 s)** because it rolls the schema back and forward. It runs last (`TransactionTestCase`) and restores data with `serialized_rollback`.
 - **Requests through the proxy are fast locally** (p50 15–25 ms). Production will add a Vercel hop; measure it on staging.
+
+---
+
+# Phase 2 · Strategy builder
+
+**Environment:** same as Phase 1 (Python 3.12 in `python:3.12-slim`, Postgres 16 container, Docker Desktop on Windows 11);
+frontend on Windows with Node and Vitest 5.1.0. Single runs, so expect ±10–20%.
+
+## Phase 2 · Checks
+| Check | Result |
+|---|---|
+| Backend suite, Postgres 16 | ✅ 104/104 (11.900 s; total with DB setup 14.959 s) |
+| Backend suite, SQLite | ✅ 104/104 (11.901 s) |
+| Frontend tests (`npm test`) | ✅ 13/13 in 3 files (7.68 s wall, of which 71% jsdom start-up) |
+| `makemigrations --check --dry-run` | ✅ No changes detected |
+| `DEBUG=0` without `SECRET_KEY` refuses to start | ✅ (exit 1) |
+| `pip-audit` | ✅ No known vulnerabilities |
+| `npm audit --omit=dev --audit-level=high` (CI gate) | ✅ 0 vulnerabilities. Full dev tree: 3 moderate, all `minimatch` under eslint (not from the new packages) |
+| `npm run lint` | ✅ |
+| `npm run build` | ✅ (the >500 kB chunk warning already existed in Phase 0) |
+| Docker image builds | Run by CI on the PR |
+
+## Phase 2 · Test count
+| Suite | Phase 1 | Phase 2 | Added |
+|---|---|---|---|
+| `backtester.tests` (existing) | 39 | 39 | 0 (unchanged and passing: Phase 2 broke no existing behavior) |
+| `accounts.tests` | 31 | 31 | 0 (2 usage assertions gained the `strategies` key; the migration test now ends at the newest migration) |
+| `backtester.test_builder` (new) | — | 34 | 34 |
+| **Backend total** | **70** | **104** | **+34** |
+| Frontend (new) | — | 13 | 13 |
+
+## Phase 2 · Per-test timings, `backtester.test_builder` (Postgres)
+| Class | Test | Time |
+|---|---|---|
+| BuilderApiTests | `test_run_end_to_end_freezes_the_spec` (two worker runs) | 0.374 s |
+| BuilderApiTests | `test_saved_strategy_limit_per_tier` | 0.297 s |
+| BuilderApiTests | `test_optimization_with_builder_and_india_costs` (3 worker runs) | 0.275 s |
+| BuilderApiTests | `test_edit_and_delete_rules` | 0.222 s |
+| BuilderApiTests | `test_india_delivery_run` | 0.186 s |
+| BuilderApiTests | `test_invalid_spec_returns_paths` | 0.137 s |
+| BuilderApiTests | `test_templates_seeded_and_visible` | 0.134 s |
+| BuilderApiTests | `test_builder_strategy_created_while_custom_code_is_off` | 0.127 s |
+| BuilderApiTests | `test_catalog_and_preview` | 0.110 s |
+| NoLookaheadTests | `test_indicators_never_see_the_future` (8 indicators × 3 cut points) | 0.100 s |
+| ParityTests | `test_builder_matches_builtin_code_trade_for_trade` (3 seeds × 600 bars) | 0.055 s |
+| NoLookaheadTests | `test_decisions_never_see_the_future` | 0.039 s |
+| IndicatorReferenceTests | 9 tests (hand values + pandas references) | 0.003–0.013 s each, 0.059 s together |
+| SpecValidationTests, SignalTests, CostTests | 13 tests | under 1 ms each (not listed by `--durations`) |
+| **Total** | **34 tests** | **≈ 2.1 s** |
+
+## Phase 2 · Time by group (Postgres)
+| Group | Tests | Time | Share of 11.9 s |
+|---|---|---|---|
+| `backtester.tests` | 39 | 4.958 s | 42% (the 2.0 s sandbox timeout test is still the largest single item) |
+| `accounts.tests` | 31 | 3.987 s | 34% |
+| `backtester.test_builder` | 34 | 2.115 s | 18% |
+| per-test overhead outside the timed bodies | — | ≈ 0.8 s | 7% |
+
+Sums use the per-test times from `--durations 0`; tests under 1 ms aren't listed there (11 in `backtester.tests`, 13 in `test_builder`).
+
+## Phase 2 · Correctness evidence
+| Property | How it is shown | Result |
+|---|---|---|
+| Indicators compute what they claim | Hand-computed values (SMA, EMA, RSI, ATR, Donchian, ROC, flat and all-gain RSI, flat MACD) and **pandas as an independent reference** on 400 random-walk bars (SMA, EMA, RSI-Wilder, ATR-Wilder, Bollinger, Donchian, ROC), tolerance 1e-9 relative | ✅ all match; builder SMA equals the engine's built-in `sma_50` **exactly** |
+| No look-ahead | Metamorphic test: rewrite every bar after *t* (prices × random 0.5–1.5, volume × 3) for *t* ∈ {30, 120, 250}; all 15 indicator outputs and all decisions up to *t* must be unchanged | ✅ identical |
+| Builder = Python built-in | Differential test: SMA 10/50 spec vs the seeded Python strategy, 3 seeds × 600 bars, with stops and targets | ✅ same fills (side, date, price, quantity, reason) and same equity curve |
+| … through the real sandbox | Benchmark run: same comparison over 2,520 bars with the code strategy in the actual subprocess | ✅ 80/80 fills equal, equity curve equal |
+| Validation | One malformed spec with 13 different problems → 13 errors, each at its exact path | ✅ |
+| India costs | Hand calculation on ₹1,00,000: buy ₹118.6226, sell ₹103.6226; with 0.03% brokerage buy 0.001540226 | ✅ exact (Decimal) |
+| Runs are reproducible | Edit the strategy after a run → the run's frozen spec is unchanged; re-run the same run → identical final value and trades | ✅ |
+| No network in tests | `download` patched; the test fails if it was called | ✅ 0 calls |
+
+## Phase 2 · Builder vs sandbox (2,520 bars ≈ 10 years, + 50 warm-up; median of 5)
+| Run | Median | Min–max | Fills |
+|---|---|---|---|
+| Code strategy SMA 10/50 in the sandbox subprocess | **298.8 ms** | 289.4–327.5 | 80 |
+| Builder SMA 10/50 (same strategy) | **30.4 ms** (**9.8× faster**) | 27.7–35.3 | 80 (identical) |
+| Builder, 9 conditions over all 8 indicators | 71.6 ms | 70.8–74.2 | 34 |
+| … of which computing signals | 60.3 ms | — | — |
+| Engine alone with a no-op strategy | 12.0 ms | — | — |
+
+Where the sandbox time goes: one subprocess start plus a JSON round trip per bar (2,520 of them). The builder computes each
+indicator once over the whole series, then the engine looks up a precomputed decision per bar. For Phase 3, a 25-combination
+grid of a typical builder strategy costs roughly 25 × 30–70 ms ≈ 1–2 s of engine time instead of ≈ 7.5 s.
+
+## Phase 2 · Migration rehearsal (Postgres 16, 500 runs, 1 optimization, 4 strategies)
+| Step | Time |
+|---|---|
+| Build Phase 1 schema (to `0015`) | 1,064 ms |
+| **Upgrade to `0017`** | **156 ms** |
+| **Roll back to `0015`** | **198 ms** |
+| Upgrade again | 141 ms |
+
+13/13 checks passed: old strategies become `kind=code` with no spec; 6 templates seeded; counts kept; old runs keep commission
+0.001 with flat costs, no sell rate and no spec; old optimizations get flat costs; the check constraint rejects a builder strategy
+without a spec and a code strategy without code; a 9-decimal fee is stored exactly; rollback removes unused templates and keeps
+all runs; **rollback rounds a 9-decimal fee to 6 places (documented)**; re-upgrade seeds the templates once, not twice.
+
+## Phase 2 · Other measurements
+| Measurement | Value |
+|---|---|
+| Frontend JS bundle, Phase 1 → Phase 2 | 678,075 → 690,550 bytes raw (+12,475, +1.8%); gzip −9: 207,414 bytes |
+| Frontend CSS, Phase 1 → Phase 2 | 8,627 → 10,485 bytes raw; gzip −9: 2,932 bytes |
+| Warm-up of the six templates | 78 (EMA 12/26), 43 (RSI 14), 105 (MACD), 20 (Bollinger), 21 (Donchian), 200 (trend-filtered RSI) bars |
+
+## Phase 2 · Bugs and surprises found while testing
+| What | Found by | Outcome |
+|---|---|---|
+| A test downloaded real AAPL data from Yahoo: the MACD template's 105-bar warm-up reached before the fixture's coverage | Log line `bars_refreshed symbol=AAPL` during the first test run (2.6 s instead of ~30 ms) | Fixture extended; tests now fail on any download attempt. `load_bars` bound `download` as a default argument, so it couldn't be patched; fixed (D-048) |
+| The legacy-migration test left the schema at `0015`, which broke the next test once `0016` existed | Full suite after adding the migration | The test now migrates forward to the newest migration when it finishes, so future migrations won't break it again |
+| My test helper gave MACD the output `value`; the validator correctly reported it | Validation test | Test expectation fixed; validator right |
+| The browser's own `min=2` check blocked the save before the server's message could appear | Frontend test (jsdom enforces constraint validation) | Form uses `noValidate`; the server's message is the only one (D-045) |
+| A ROC hand value differed in the last float digit (−9.999999999999998) | Indicator test | Compared with a tolerance; Decimal stays exact for money only |
+
+## Phase 2 · Observations
+- **The interpreter is 9.8× faster than the sandbox** for the same strategy, and gives identical results. Most of a builder
+  run is computing indicators (60 of 72 ms in the heaviest case), which is the place to optimise if Phase 3 grids get large.
+- **Tests grew from 70 to 117 (104 backend + 13 frontend)**; backend time grew from 7.5 s to 11.9 s on Postgres. The new
+  builder tests add 2.1 s, mostly the API tests that run real backtests through the worker.
+- **The strongest tests are properties, not examples:** the metamorphic look-ahead test and the differential parity test
+  would catch whole classes of bugs, not just the cases someone thought of.

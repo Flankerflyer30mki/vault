@@ -19,7 +19,7 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-009 | 0 | List endpoints load only the fields they show | Accepted |
 | D-010 | 0 | Bump `soupsieve` 2.9.1 → 4.0.0 | Accepted |
 | D-011 | Deploy | Docker: not needed locally (WSL instead); Render setup decided at deployment | Deferred |
-| D-012 | 2 | Builder: form → JSON spec → generated Python → existing sandbox; API accepts JSON only | Accepted in principle |
+| D-012 | 2 | Builder: form → JSON spec → generated Python → existing sandbox; API accepts JSON only | Superseded by D-033 |
 | D-013 | 4–5 | AI behind one provider module; Gemini free tier first | Accepted in principle |
 | D-014 | 6 | Build phase by phase on staging; release once at the end | Accepted |
 | D-015 | 1 | Custom User model, email as login | Accepted |
@@ -40,6 +40,23 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-030 | 1 | MD5 password hasher in account tests only | Accepted |
 | D-031 | 1 | Guest/session cleanup runs inside the worker loop, hourly | Accepted |
 | D-032 | 1 | Frontend verified by an end-to-end smoke test through the proxy, not unit tests (yet) | Accepted |
+| D-033 | 2 | Builder strategies are a JSON spec interpreted by the engine; no code is generated or run | Accepted |
+| D-034 | 2 | Spec v1 format: versioned; entry and exit groups (all/any) of up to 10 conditions | Accepted |
+| D-035 | 2 | Eight v1 indicators: SMA, EMA, RSI, MACD, Bollinger, ATR, Donchian, ROC | Accepted |
+| D-036 | 2 | Long-only: a strategy is either fully in the stock or in cash; no shorting | Accepted |
+| D-037 | 2 | Saved-strategy limits per tier: guest 5, unverified 20, verified 100 | Accepted |
+| D-038 | 2 | India as a first-class market: NSE/BSE symbols, INR, an Indian delivery cost preset | Accepted |
+| D-039 | 2 | Frontend component tests with Vitest and React Testing Library | Accepted |
+| D-040 | Later | Options backtesting: decide after Phase 3 | Deferred |
+| D-041 | 2 | Keep a concepts glossary (`docs/concepts.md`) for interview revision | Accepted |
+| D-042 | 2 | Signals without position state: exit wins over entry on the same bar | Accepted |
+| D-043 | 2 | Dynamic warm-up: longest lookback, 3× for smoothed indicators, capped at 600 bars | Accepted |
+| D-044 | 2 | Indicator conventions fixed and documented (Wilder, population std, Donchian prior bars, ROC in %) | Accepted |
+| D-045 | 2 | Server-driven builder: catalog endpoint + live preview; the server is the only validator | Accepted |
+| D-046 | 2 | Strategies editable (runs keep a frozen copy); delete refused once runs exist; built-ins read-only | Accepted |
+| D-047 | 2 | Fee rates stored with 9 decimals; separate buy and sell rates | Accepted |
+| D-048 | 2 | Tests may never reach the data provider | Accepted |
+| D-049 | 2 | Currency inferred from the symbol, display only | Accepted |
 
 ---
 
@@ -112,7 +129,7 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 - **Decision so far:** Docker isn't required locally. Use WSL2 Ubuntu for the backend (the sandbox needs Linux) and plain Windows for the frontend. Render and CI don't depend on local Docker.
 - **Deferred:** (A) keep the Dockerfile for Render only, or (B) run Render as native Python and remove Docker entirely. **Revisit when setting up staging and deployment.**
 
-## D-012 · Builder pipeline (Phase 2, in principle)
+## D-012 · Builder pipeline (Phase 2, in principle) · *Superseded by D-033*
 - **Decision:** Form → validated JSON spec (the source of truth) → server-generated Python built from templates → the existing sandbox. The public API accepts only JSON, never Python. The engine calculates the indicators the strategy declares. The generated code is shown read-only in the UI.
 - **Why:** User-built strategies can run on the public site without opening it to arbitrary code, and they reuse the one existing way of running strategies.
 
@@ -216,3 +233,150 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 - **Options:** (A) add Vitest and React Testing Library unit tests now, (B) an end-to-end smoke test through the real proxy plus lint and build.
 - **Decision:** B for Phase 1.
 - **Why:** The riskiest frontend change is the cookie, CSRF and proxy setup, which only an end-to-end test proves. Component unit tests are proposed for Phase 2, when the builder UI brings real client-side logic.
+
+---
+
+# Phase 2 · Strategy builder (approved 2026-11-16)
+
+Context: before Phase 2 we compared Vault with the Moneylogix strategy builder that inspired the overhaul. That project is an
+**options position builder** (legs, payoff at expiry, Greeks, margin) evaluated at one point in time. Vault's builder is a
+**rule builder** (when to buy and sell) tested on years of real prices. Same word, different problem; the two are
+complementary rather than competing. Condition rows of the form *indicator · comparison · indicator or value*, combined with
+AND/OR, are the standard way retail tools (for example Zerodha Streak, TradingView's strategy tester, Amibroker) build rule strategies.
+
+## D-033 · Interpret the spec; never generate or run code (supersedes D-012)
+- **Options:** (A) generate Python from templates and run it in the existing sandbox (the D-012 plan); (B) interpret the
+  validated JSON spec inside the engine's process.
+- **Decision:** B. A read-only "View as Python" rendering is produced for people to read; it is never executed.
+- **Why:** (1) **Safety:** user input stays data. There is no string-built code, so there is nothing to escape and no exception
+  to the "no custom code in production" rule (`ALLOW_CUSTOM_CODE` stays off). (2) **Speed:** no subprocess and no JSON round trip
+  per bar, which matters for the grids in Phase 3 and the many candidate strategies in Phase 5. (3) **Testability:** one small
+  evaluator with a fixed set of operators.
+- **Gave up:** builder strategies can't contain anything the operators don't express. That's intended: the custom-code path
+  still exists where an operator enables it.
+- **Interview angle:** "The API accepts only data; user input never becomes code."
+
+## D-034 · Spec v1 format
+- **Decision:** `{"version": 1, "entry": {"all"|"any": [conditions]}, "exit": {"all"|"any": [conditions]}}`. A condition is
+  `{"left": operand, "op": op, "right": operand}`. An operand is an indicator (`ind`, `params`, `output`), a price field
+  (open, high, low, close, volume) or a constant. Operators: `>`, `<`, `>=`, `<=`, `crosses_above`, `crosses_below`. Each group
+  holds 1–10 conditions. No nested groups in v1.
+- **Why:** flat groups are easy to fill in on a form and hard for an AI to get wrong (Phase 5). `version` lets later phases
+  extend the format without breaking saved strategies. Stop-loss and take-profit stay run parameters, so the existing
+  optimization grid keeps working unchanged.
+
+## D-035 · v1 indicators
+- **Decision:** SMA, EMA, RSI (Wilder), MACD (line, signal, histogram), Bollinger Bands (upper, middle, lower), ATR, Donchian
+  channel (upper, lower), ROC. Periods 2–200.
+- **Why:** they cover the four common rule styles: trend, momentum, volatility and breakout. More indicators add reference tests
+  and code without changing what the builder demonstrates.
+
+## D-036 · Long-only (no shorting)
+- **What it means:** a strategy is either **fully in the stock** or **in cash**. `BUY` while in cash opens a position; `SELL`
+  while holding closes it; any other signal is ignored. A bearish signal means "step aside into cash", not "bet on the fall".
+- **Options:** (A) long-only; (B) add short selling to the engine.
+- **Decision:** A.
+- **Why:**
+  1. **Realism for Indian equities.** In the Indian cash market, retail traders can't hold a short position in delivery (overnight):
+     shorting is intraday only, or done through futures and options. A backtest that let a strategy short `RELIANCE.NS` for months
+     would report results nobody could actually get.
+  2. **Unlimited loss changes the engine's core.** A long position can lose at most 100%; a short can lose more. Shorting needs
+     margin, forced closing (margin calls), borrow costs and a check that shares can be borrowed at all.
+  3. **Stops and targets flip.** For a short, the stop sits above entry and the target below; every fill rule (gaps, intrabar
+     touches, "stop wins") would need rewriting and re-testing.
+  4. **The ledger invariant changes.** Today `equity = cash + quantity × close` with `quantity ≥ 0`. A short makes the quantity
+     negative, and cash includes sale proceeds you don't really own.
+  5. **Cleaner comparisons in Phase 3.** Long-only results compare directly with buy-and-hold.
+- **Gave up:** a strategy can't profit from falling prices; it can only avoid them by holding cash. For daily-bar rule strategies on
+  single stocks this matches how most retail systems trade delivery.
+- **Revisit when:** derivatives arrive (see D-040). In India, the realistic way to express a bearish view is futures or options,
+  not shorting the cash stock.
+- **Interview angle:** "Vault is long-only on purpose: Indian retail traders can't carry a short position overnight in the cash
+  market, so a backtest that allowed it would be unrealistic."
+
+## D-037 · Saved-strategy limits
+- **Decision:** guest 5, unverified 20, verified 100 saved strategies (env-overridable like the other quotas). Built-ins don't count.
+- **Why:** without a limit one account can fill the database. Same tiers as Phase 1, so verification still unlocks more.
+
+## D-038 · India as a first-class market
+- **Decision:** (1) symbol suggestions include NSE stocks and indices (`RELIANCE.NS`, `^NSEI`, …); (2) the currency is inferred
+  from the symbol (`.NS`/`.BO` and Indian indices → INR, no suffix → USD, anything else → unknown) and money is shown in it;
+  (3) a new **India delivery cost model** adds statutory charges per side on top of the broker's brokerage: STT, exchange
+  transaction charges, SEBI fee, stamp duty (buy side only) and GST. Buys and sells cost different amounts, so the engine gets a
+  separate sell-side rate.
+- **Why:** relevant to Indian fintech roles, and a realistic cost model shows domain knowledge. A single "commission %" can't
+  express stamp duty (buy only) or GST on some charges but not others.
+- **Gave up:** flat per-order charges (DP charges on sells, minimum brokerage) aren't modelled; only percentage charges are.
+
+## D-039 · Frontend component tests
+- **Decision:** add Vitest and React Testing Library (dev dependencies only) and run them in CI.
+- **Why:** the builder is the first page with real client-side logic (form state ↔ spec). Round-trip and rendering bugs live there,
+  and the end-to-end smoke test from Phase 1 can't reach them cheaply.
+
+## D-040 · Options backtesting: decide after Phase 3 (Deferred)
+- **Options considered:** (A) real NSE end-of-day options data from the free F&O bhavcopy files (largest, strongest); (B) option
+  prices modelled with Black-Scholes from the underlying (quick but misleading: ignores the volatility smile and real premiums).
+- **Decision:** decide after Phase 3, when we know how solid the core is and how much time is left. B is not recommended.
+
+## D-041 · Concepts glossary
+- **Decision:** keep `docs/concepts.md`: each concept used in Vault, where it lives in the code, and how to say it in an interview.
+
+## Phase 2 · Implementation decisions made while building
+
+## D-042 · Exit wins; no position state in the interpreter
+- **Context:** a spec needs "buy when flat if entry, sell when holding if exit". Passing the position into the strategy would change
+  the engine's `decide(bar, indicators)` contract that code strategies use.
+- **Decision:** per bar, `SELL` if exit is true, else `BUY` if entry is true, else `HOLD`. The long-only engine already ignores a
+  `BUY` while holding and a `SELL` while flat, so the result is the same as position-aware logic in every case but one: entry
+  and exit both true while flat. Then the strategy stays out.
+- **Why:** signals become a pure function of the bars, so they can be precomputed for the whole series in one pass (fast, and
+  trivially free of look-ahead). Staying out on contradictory signals is the conservative choice, in the same spirit as the
+  engine's "stop wins". The parity test proves this matches the Python built-in exactly.
+
+## D-043 · Dynamic warm-up
+- **Decision:** warm-up = the largest lookback among the spec's indicators: the bars needed for a value to exist one bar before
+  the first decision (so a crossover can fire on the first bar), plus 2n more for EMA-based indicators so the seed fades. Capped
+  at 600 bars. Code strategies keep 50. `load_bars` asks for `warmup × 2` calendar days and the manifest records the count.
+- **Why:** a fixed 50 would leave SMA-200 empty for 150 bars of the test period, silently changing the strategy. Smoothed
+  indicators never fully forget their seed; 3n bars is a standard compromise (seed weight ≈ e⁻³ ≈ 5% for EMA).
+- **Consequence:** an EMA or RSI value on a date depends slightly on how much history precedes it, as in every charting tool.
+  Recorded in [tradeoff.md](tradeoff.md).
+
+## D-044 · Indicator conventions
+- **Decision:** EMA seeded with an SMA then α = 2/(n+1); RSI and ATR use Wilder smoothing (α = 1/n); Bollinger uses the
+  population standard deviation; Donchian uses the n bars before the current one; ROC is a percentage; RSI of flat prices is 50.
+- **Why:** implementations disagree on each of these, and an unstated choice makes results impossible to reconcile. Each choice
+  is the original author's definition or the common charting default, and each is pinned by a reference test.
+
+## D-045 · Server-driven builder form
+- **Decision:** `GET /api/strategies/catalog/` describes everything the form offers (indicators with parameter ranges and
+  defaults, operators, limits, cost models, suggested symbols). `POST /api/strategies/preview/` validates and renders a spec
+  without saving; the form calls it 400 ms after each change. Errors come back keyed by path and are shown on the matching
+  field. The form disables the browser's own validation (`noValidate`) so the server's wording is the only message.
+- **Why:** one allowlist, in one place. Adding an indicator to `indicators.REGISTRY` makes it appear in the UI with no frontend
+  change, and the client can never accept something the server rejects.
+
+## D-046 · Edit, delete and templates
+- **Decision:** owners can edit a strategy's name and spec (`PATCH`); its kind can't change. Runs keep their frozen copy, so
+  editing never rewrites results. Deleting a strategy that has runs returns `409` (deleting it would cascade to those runs).
+  Built-ins are read-only (`403`); "Use as template" opens a copy in the builder.
+- **Why:** reproducibility. A result must always be traceable to exactly what produced it.
+
+## D-047 · Fee precision and separate sell rate
+- **Decision:** `commission_pct` and the new `sell_commission_pct` are stored with 9 decimal places; the engine charges the
+  sell rate on sells (`Params.sell_commission_pct`, defaulting to the buy rate). `ENGINE_VERSION` 2.0.0 → 2.1.0.
+- **Why:** India's buy rate with zero brokerage is 0.001186226; 6 places would round away ₹0.02 per ₹1 lakh on every fill. Stamp
+  duty applies only to buys, so one rate can't describe both sides.
+
+## D-048 · Tests may never reach the data provider
+- **Context:** while building, a test's warm-up reached further back than the fixture's coverage, and the worker quietly
+  downloaded real AAPL data from Yahoo during the test (2.6 s instead of ~30 ms, and real prices replaced the fixture).
+- **Decision:** fixtures cover the whole warm-up span, and builder API tests patch `data_fetch.download` and fail if it was
+  called. `load_bars` now looks `download` up on each call (it was bound as a default argument, which made patching impossible).
+- **Why:** a test that depends on the network is slow, flaky, and no longer tests the data it claims to.
+
+## D-049 · Currency from the symbol, display only
+- **Decision:** `.NS`/`.BO` and Indian indices → INR; plain US tickers and US indices → USD; any other suffix → unknown (shown
+  without a currency sign). Never used in a calculation.
+- **Why:** asking Yahoo for metadata costs a network call per symbol and fails often. A wrong currency sign would be worse
+  than none, hence "unknown" rather than a USD default for foreign exchanges.
