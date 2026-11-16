@@ -150,7 +150,11 @@ REST_FRAMEWORK = {
 VAULT = {
     "ALLOW_CUSTOM_CODE": env("ALLOW_CUSTOM_CODE", "0") == "1",
     "MAX_ACTIVE_RUNS": env_int("MAX_ACTIVE_RUNS", 50),  # global queued+running cap
-    "MAX_GRID": env_int("MAX_GRID", 25),
+    "MAX_GRID": env_int("MAX_GRID", 25),  # child runs per experiment (optimization combos or comparison cells)
+    "MAX_GRID_PARAMS": env_int("MAX_GRID_PARAMS", 4),  # spec parameters one optimization may vary
+    "MAX_COMPARE_STRATEGIES": env_int("MAX_COMPARE_STRATEGIES", 10),
+    "MAX_COMPARE_SYMBOLS": env_int("MAX_COMPARE_SYMBOLS", 10),
+    "BENCHMARKS": {"INR": "^NSEI", "USD": "^GSPC"},  # index buy-and-hold per currency for comparisons
     "MAX_RANGE_DAYS": env_int("MAX_RANGE_DAYS", 3660),
     "MAX_CODE_CHARS": env_int("MAX_CODE_CHARS", 10_000),
     "RUN_TIMEOUT_S": env_int("RUN_TIMEOUT_S", 60),
@@ -163,9 +167,9 @@ VAULT = {
     # Per-user quotas by tier; override any value with QUOTA_<TIER>_<LIMIT>, e.g. QUOTA_VERIFIED_RUNS_PER_DAY.
     "QUOTAS": {tier: {k: env_int(f"QUOTA_{tier.upper()}_{k.upper()}", v) for k, v in defaults.items()}
                for tier, defaults in {
-                   "guest": {"active_jobs": 2, "runs_per_day": 20, "optimizations_per_day": 2, "strategies": 5},
-                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "optimizations_per_day": 3, "strategies": 20},
-                   "verified": {"active_jobs": 10, "runs_per_day": 200, "optimizations_per_day": 20, "strategies": 100},
+                   "guest": {"active_jobs": 2, "runs_per_day": 20, "experiments_per_day": 2, "strategies": 5},
+                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "experiments_per_day": 3, "strategies": 20},
+                   "verified": {"active_jobs": 10, "runs_per_day": 200, "experiments_per_day": 20, "strategies": 100},
                }.items()},
 }
 

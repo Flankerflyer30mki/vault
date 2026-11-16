@@ -223,5 +223,5 @@ class DeleteAccountView(SignedInView):
         if not user.is_guest:
             _require_password(user, s.validated_data["current_password"])
         logout(request)
-        user.delete()  # cascades to strategies, runs, trades and optimizations
+        user.delete()  # cascades to strategies, runs, trades and experiments
         return Response(status=status.HTTP_204_NO_CONTENT)

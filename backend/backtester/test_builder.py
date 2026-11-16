@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from backtester import costs, engine, indicators as ind, jobs, spec
 from backtester.engine import Params, simulate
-from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, SymbolCoverage, Trade
+from backtester.models import BacktestRun, Bar, Experiment, Strategy, SymbolCoverage, Trade
 
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
 TEMPLATES = importlib.import_module("backtester.migrations.0017_builder_templates").TEMPLATES
@@ -480,7 +480,7 @@ class BuilderApiTests(TestCase):
 
     def test_templates_seeded_and_visible(self):
         names = {s["name"] for s in self.api.get("/api/strategies/").json()["results"] if s["kind"] == "builder"}
-        self.assertEqual(names, set(TEMPLATES))
+        self.assertEqual(names, set(TEMPLATES) | {"Buy and Hold"})  # Phase 3 adds Buy and Hold (migration 0019)
 
     def test_run_end_to_end_freezes_the_spec(self):
         sid = self.create(TEMPLATES["MACD Signal Cross (12/26/9)"]).json()["id"]
@@ -531,7 +531,7 @@ class BuilderApiTests(TestCase):
                                                                stop_loss_options=["0.05", "0.1"],
                                                                take_profit_options=["0.2"]), format="json")
         self.assertEqual(r.status_code, 201, r.content)
-        job = OptimizationJob.objects.get(id=r.json()["id"])
+        job = Experiment.objects.get(id=r.json()["id"])
         while jobs.work_one("w"):
             pass
         runs = list(job.runs.all())
