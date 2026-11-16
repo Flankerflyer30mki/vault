@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 PCT = dict(max_digits=10, decimal_places=6)
@@ -33,10 +34,18 @@ class SymbolCoverage(models.Model):
 
 
 class Strategy(models.Model):
+    # Built-ins are shared and have no owner; every other strategy belongs to exactly one user.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="strategies")
     name = models.CharField(max_length=100)
     code = models.TextField()
     is_builtin = models.BooleanField(default=False)  # pre-approved; runnable when custom code is disabled
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(
+            condition=models.Q(is_builtin=True, owner__isnull=True) | models.Q(is_builtin=False, owner__isnull=False),
+            name="ck_strategy_builtin_xor_owner")]
 
     def __str__(self):
         return self.name
@@ -45,6 +54,7 @@ class Strategy(models.Model):
 class OptimizationJob(models.Model):
     """Grid search on the in-sample period; the best combination is then evaluated once
     on the untouched out-of-sample tail. Status is derived from child runs, never stored."""
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="optimizations")
     strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="optimization_jobs")
     symbol = models.CharField(max_length=20)
     start_date = models.DateField()
@@ -53,8 +63,13 @@ class OptimizationJob(models.Model):
     starting_cash = models.DecimalField(max_digits=14, decimal_places=2, default=10000)
     stop_loss_options = models.JSONField(default=list)
     take_profit_options = models.JSONField(default=list)
-    idempotency_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Keys are scoped per user: one user's key must never match (and return) another user's job.
+        constraints = [models.UniqueConstraint(fields=["owner", "idempotency_key"], name="uq_opt_owner_idem_key")]
+        indexes = [models.Index(fields=["owner", "-created_at"], name="idx_opt_owner_created")]
 
     def __str__(self):
         return f"Optimization {self.id} - {self.symbol}"
@@ -66,6 +81,7 @@ class BacktestRun(models.Model):
     ACTIVE = (QUEUED, PREPARING, RUNNING)
     SAMPLE_CHOICES = [("full", "full"), ("in", "in-sample"), ("out", "out-of-sample")]
 
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="runs")
     strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="runs")
     optimization = models.ForeignKey(OptimizationJob, null=True, blank=True, on_delete=models.CASCADE,
                                      related_name="runs")
@@ -85,7 +101,7 @@ class BacktestRun(models.Model):
     strategy_hash = models.CharField(max_length=64, blank=True, default="")
     engine_version = models.CharField(max_length=20, blank=True, default="")
     data_manifest = models.JSONField(null=True, blank=True)
-    idempotency_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
 
     # Durable job state. The table is the queue (SELECT ... FOR UPDATE SKIP LOCKED).
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=QUEUED)
@@ -113,9 +129,11 @@ class BacktestRun(models.Model):
     equity_curve = models.JSONField(null=True, blank=True)  # [[date, value], ...]
 
     class Meta:
-        indexes = [models.Index(fields=["status", "id"], name="idx_run_status_id")]  # queue claim + admission count
+        indexes = [models.Index(fields=["status", "id"], name="idx_run_status_id"),  # queue claim + admission count
+                   models.Index(fields=["owner", "-created_at"], name="idx_run_owner_created")]  # lists + quotas
         constraints = [models.UniqueConstraint(fields=["optimization"], condition=models.Q(sample="out"),
-                                               name="uq_run_one_oos_per_optimization")]
+                                               name="uq_run_one_oos_per_optimization"),
+                       models.UniqueConstraint(fields=["owner", "idempotency_key"], name="uq_run_owner_idem_key")]
 
     def __str__(self):
         return f"Run {self.id} - {self.symbol} ({self.status})"
