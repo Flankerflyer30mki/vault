@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { errorText, list } from "../api";
+import { CostModelFields, SymbolInput } from "../components";
 
 const MAX_VALUES = 10;
 const MAX_GRID = 25; // server enforces its own limit; this is only early feedback
@@ -30,9 +31,11 @@ function OptimizationTrigger() {
     start_date: "2022-01-01",
     end_date: today,
     starting_cash: "10000",
+    cost_model: "flat",
   });
   const [stopLossText, setStopLossText] = useState("0.05, 0.08, 0.12");
   const [takeProfitText, setTakeProfitText] = useState("0.10, 0.15, 0.20");
+  const [catalog, setCatalog] = useState(null);
 
   useEffect(() => {
     api
@@ -43,6 +46,10 @@ function OptimizationTrigger() {
         if (s.length) setForm((f) => ({ ...f, strategy: s[0].id }));
       })
       .catch((err) => setError(errorText(err)));
+    api
+      .get("/strategies/catalog/")
+      .then((res) => setCatalog(res.data))
+      .catch(() => setCatalog(null));
   }, []);
 
   const set = (field, value) => setForm({ ...form, [field]: value });
@@ -80,14 +87,23 @@ function OptimizationTrigger() {
               <option key={s.id} value={s.id}>
                 {s.name}
                 {s.is_builtin ? " (built-in)" : ""}
+                {s.kind === "builder" ? " · builder" : ""}
               </option>
             ))}
           </select>
         </label>
-        <label>
-          Symbol
-          <input type="text" value={form.symbol} onChange={(e) => set("symbol", e.target.value.toUpperCase())} required />
-        </label>
+        <SymbolInput value={form.symbol} onChange={(v) => set("symbol", v)} suggestions={catalog?.suggested_symbols} />
+        <CostModelFields
+          catalog={catalog}
+          costModel={form.cost_model}
+          showCommission={false}
+          onChange={({ cost_model }) => set("cost_model", cost_model)}
+        />
+        <p className="hint">
+          {form.cost_model === "india_delivery"
+            ? "Each run uses zero brokerage plus India's statutory charges."
+            : "Each run uses a 0.1% commission per fill."}
+        </p>
         <label>
           Start Date
           <input type="date" value={form.start_date} max={today} onChange={(e) => set("start_date", e.target.value)} required />
@@ -97,7 +113,7 @@ function OptimizationTrigger() {
           <input type="date" value={form.end_date} max={today} onChange={(e) => set("end_date", e.target.value)} required />
         </label>
         <label>
-          Starting Cash ($)
+          Starting cash (in the symbol&apos;s currency)
           <input type="number" min={100} max={10000000} value={form.starting_cash} onChange={(e) => set("starting_cash", e.target.value)} required />
         </label>
         <label>

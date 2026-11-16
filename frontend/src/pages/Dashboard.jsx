@@ -8,6 +8,7 @@ const QUOTA_LABELS = {
   active_jobs: "Jobs running",
   runs_per_day: "Backtests (last 24 h)",
   optimizations_per_day: "Optimizations (last 24 h)",
+  strategies: "Saved strategies",
 };
 
 function QuotaBar({ label, used, limit }) {

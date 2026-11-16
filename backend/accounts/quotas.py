@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException
 
-from backtester.models import BacktestRun, OptimizationJob
+from backtester.models import BacktestRun, OptimizationJob, Strategy
 
 WINDOW = timedelta(hours=24)
 
@@ -33,6 +33,7 @@ def usage(user):
         "active_jobs": active_runs + active_opts,
         "runs_per_day": BacktestRun.objects.filter(owner=user, optimization__isnull=True, created_at__gte=since).count(),
         "optimizations_per_day": OptimizationJob.objects.filter(owner=user, created_at__gte=since).count(),
+        "strategies": Strategy.objects.filter(owner=user).count(),  # saved, not per day; built-ins don't count
     }
 
 
@@ -48,6 +49,15 @@ def check(user, kind):
         hint = " Verify your email to raise your limits." if user.tier != "verified" else ""
         raise QuotaExceeded(f"Daily limit reached: {lim[per_day]} {noun} per 24 hours for {user.tier} accounts."
                             + hint)
+
+
+def check_strategy(user):
+    """Saved-strategy limit. Call with the user's row locked (see StrategyListCreateView)."""
+    lim, used = limits(user)["strategies"], Strategy.objects.filter(owner=user).count()
+    if used >= lim:
+        hint = " Verify your email to raise your limits." if user.tier != "verified" else ""
+        raise QuotaExceeded(f"You have {used} saved strategies (limit {lim} for {user.tier} accounts). "
+                            "Delete one you no longer need." + hint)
 
 
 def visible_strategies_q(user):

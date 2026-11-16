@@ -2,6 +2,8 @@ from django.conf import settings
 from django.db import models
 
 PCT = dict(max_digits=10, decimal_places=6)
+FEE = dict(max_digits=12, decimal_places=9)  # India's statutory charges need 9 places (0.001186226)
+COST_MODEL_CHOICES = [("flat", "flat"), ("india_delivery", "india_delivery")]
 
 
 class Bar(models.Model):
@@ -34,18 +36,30 @@ class SymbolCoverage(models.Model):
 
 
 class Strategy(models.Model):
+    CODE, BUILDER = "code", "builder"
+    KIND_CHOICES = [(CODE, "code"), (BUILDER, "builder")]
+
     # Built-ins are shared and have no owner; every other strategy belongs to exactly one user.
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE,
                               related_name="strategies")
     name = models.CharField(max_length=100)
-    code = models.TextField()
+    # A code strategy has Python run in the sandbox; a builder strategy has a JSON spec interpreted by spec.py.
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=CODE)
+    code = models.TextField(blank=True, default="")
+    spec = models.JSONField(null=True, blank=True)
     is_builtin = models.BooleanField(default=False)  # pre-approved; runnable when custom code is disabled
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.CheckConstraint(
-            condition=models.Q(is_builtin=True, owner__isnull=True) | models.Q(is_builtin=False, owner__isnull=False),
-            name="ck_strategy_builtin_xor_owner")]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(is_builtin=True, owner__isnull=True) | models.Q(is_builtin=False, owner__isnull=False),
+                name="ck_strategy_builtin_xor_owner"),
+            models.CheckConstraint(
+                condition=(models.Q(kind="code", spec__isnull=True) & ~models.Q(code=""))
+                | models.Q(kind="builder", spec__isnull=False, code=""),
+                name="ck_strategy_kind_body"),
+        ]
 
     def __str__(self):
         return self.name
@@ -63,6 +77,7 @@ class OptimizationJob(models.Model):
     starting_cash = models.DecimalField(max_digits=14, decimal_places=2, default=10000)
     stop_loss_options = models.JSONField(default=list)
     take_profit_options = models.JSONField(default=list)
+    cost_model = models.CharField(max_length=20, choices=COST_MODEL_CHOICES, default="flat")
     idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -91,13 +106,16 @@ class BacktestRun(models.Model):
     end_date = models.DateField()
     starting_cash = models.DecimalField(max_digits=14, decimal_places=2, default=10000)
     max_position_pct = models.DecimalField(default=1, **PCT)
-    commission_pct = models.DecimalField(default="0.001", **PCT)
+    commission_pct = models.DecimalField(default="0.001", **FEE)  # buy side (and sell side unless set below)
+    sell_commission_pct = models.DecimalField(null=True, blank=True, **FEE)
+    cost_model = models.CharField(max_length=20, choices=COST_MODEL_CHOICES, default="flat")
     slippage_pct = models.DecimalField(default="0.0005", **PCT)
     stop_loss_pct = models.DecimalField(null=True, blank=True, **PCT)
     take_profit_pct = models.DecimalField(null=True, blank=True, **PCT)
 
-    # Reproducibility: exact code, engine and data used.
+    # Reproducibility: exact code or spec, engine and data used.
     strategy_code = models.TextField(blank=True, default="")
+    strategy_spec = models.JSONField(null=True, blank=True)  # set for builder strategies, frozen at creation
     strategy_hash = models.CharField(max_length=64, blank=True, default="")
     engine_version = models.CharField(max_length=20, blank=True, default="")
     data_manifest = models.JSONField(null=True, blank=True)

@@ -28,6 +28,7 @@ function RunDetail() {
   const warnings = run.data_manifest?.warnings || [];
   const curve = toPoints(run.equity_curve);
   const legacy = !run.engine_version;
+  const cur = (v) => money(v, run.currency); // INR for NSE/BSE symbols, USD for US tickers
 
   return (
     <div>
@@ -35,7 +36,7 @@ function RunDetail() {
         Run #{run.id} — {run.strategy_name}
       </h1>
       <p>
-        {run.symbol} | {run.start_date} to {run.end_date} | Starting cash: {money(run.starting_cash)} |{" "}
+        {run.symbol} | {run.start_date} to {run.end_date} | Starting cash: {cur(run.starting_cash)} |{" "}
         {SAMPLE_LABEL[run.sample]}
       </p>
       {error && <p className="error">Live updates paused: {error}</p>}
@@ -92,14 +93,14 @@ function RunDetail() {
           )}
           <div className="metrics-grid">
             {[
-              ["Final Value", money(run.final_value)],
+              ["Final Value", cur(run.final_value)],
               ["CAGR", pct(run.cagr)],
               ["Sharpe Ratio", num(run.sharpe_ratio)],
               ["Max Drawdown", pct(run.max_drawdown)],
               ["Win Rate (net)", pct(run.win_rate)],
               ["Buy & Hold (gross)", pct(run.buy_and_hold_return)],
-              ["Commission Paid", money(run.total_commission)],
-              ["Slippage Cost", money(run.total_slippage)],
+              ["Commission Paid", cur(run.total_commission)],
+              ["Slippage Cost", cur(run.total_slippage)],
               ["Execution Time", `${run.execution_time_ms} ms`],
             ].map(([label, value]) => (
               <div className="metric-card" key={label}>
@@ -118,7 +119,7 @@ function RunDetail() {
                 <YAxis stroke="#888" domain={["auto", "auto"]} />
                 <Tooltip
                   contentStyle={{ background: "#222", border: "1px solid #444" }}
-                  formatter={(v) => money(v)}
+                  formatter={(v) => cur(v)}
                 />
                 <Line type="monotone" dataKey="v" name="Equity" stroke="#4dabf7" dot={false} />
               </LineChart>
@@ -147,10 +148,10 @@ function RunDetail() {
                   <tr key={t.id} className={t.side === "BUY" ? "buy-row" : "sell-row"}>
                     <td>{t.side}</td>
                     <td>{t.ts.slice(0, 10)}</td>
-                    <td>{money(t.price)}</td>
+                    <td>{cur(t.price)}</td>
                     <td>{num(t.quantity, 6)}</td>
-                    <td>{money(t.commission)}</td>
-                    <td>{money(t.cash_after)}</td>
+                    <td>{cur(t.commission)}</td>
+                    <td>{cur(t.cash_after)}</td>
                     <td>{t.reason.replace("_", " ")}</td>
                   </tr>
                 ))}
