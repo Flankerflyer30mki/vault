@@ -330,6 +330,7 @@ all runs; **rollback rounds a 9-decimal fee to 6 places (documented)**; re-upgra
 | My test helper gave MACD the output `value`; the validator correctly reported it | Validation test | Test expectation fixed; validator right |
 | The browser's own `min=2` check blocked the save before the server's message could appear | Frontend test (jsdom enforces constraint validation) | Form uses `noValidate`; the server's message is the only one (D-045) |
 | A ROC hand value differed in the last float digit (−9.999999999999998) | Indicator test | Compared with a tolerance; Decimal stays exact for money only |
+| CI's `npm test` crashed before running any test (`undici` failed to load) | First CI run on PR #3; local runs passed on Node 24 | CI used Node 20, but jsdom 31 / Vitest 5 need Node ≥ 22 (and Node 20 is end-of-life). CI and the frontend Dockerfile moved to Node 24 |
 
 ## Phase 2 · Observations
 - **The interpreter is 9.8× faster than the sandbox** for the same strategy, and gives identical results. Most of a builder
