@@ -96,6 +96,10 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 50,
     # ponytail: LocMemCache makes these per-process, per-IP limits. Shared cache if replicas > 1.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+    # Clients are identified by IP. Without NUM_PROXIES, DRF uses the whole X-Forwarded-For header, which a
+    # client can set to anything to dodge throttling. 0 = use REMOTE_ADDR (no proxy); N = trust the address
+    # appended by the Nth proxy from the end. Render has one proxy in front of the service.
+    "NUM_PROXIES": env_int("NUM_PROXIES", 1 if env("RENDER_EXTERNAL_HOSTNAME") else 0),
     "DEFAULT_THROTTLE_RATES": {
         "read": env("THROTTLE_READ", "300/min"),
         "write": env("THROTTLE_WRITE", "30/min"),

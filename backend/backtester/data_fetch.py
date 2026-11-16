@@ -1,12 +1,21 @@
-"""Market data: coverage check, idempotent fetch, validation. Runs inside the worker, never in a request."""
+"""Market data: coverage check, idempotent fetch, validation. Runs inside the worker, never in a request.
+
+Adjusted prices (auto_adjust=True) are restated by the provider after every split and dividend, so bars
+fetched at different times can be on different price scales. To keep one symbol's history on a single
+scale, every fetch re-downloads the symbol's whole known span and replaces its stored bars.
+"""
 import hashlib
 import logging
 import math
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
+from django.db import transaction
+from django.db.models import Max, Min
+from django.utils import timezone
+
 from backtester.engine import WARMUP_BARS
-from backtester.models import Bar
+from backtester.models import Bar, SymbolCoverage
 
 log = logging.getLogger(__name__)
 PROVIDER = {"provider": "yahoo", "adjusted": True, "interval": "1d"}
@@ -46,8 +55,14 @@ def download(symbol, start, end):
     return bars, rejected
 
 
+def _day_start(d):
+    return datetime.combine(d, time(), tzinfo=UTC)
+
+
 def _query(symbol, start, end):
-    return list(Bar.objects.filter(symbol=symbol, ts__date__gte=start, ts__date__lte=end).order_by("ts"))
+    # Half-open range on ts itself (not ts__date) so the (symbol, ts) index is usable.
+    return list(Bar.objects.filter(symbol=symbol, ts__gte=_day_start(start),
+                                   ts__lt=_day_start(end + timedelta(days=1))).order_by("ts"))
 
 
 def coverage_warnings(bars, start, end):
@@ -65,19 +80,56 @@ def coverage_warnings(bars, start, end):
     return out
 
 
+def _covered(symbol, start, end):
+    cov = SymbolCoverage.objects.filter(symbol=symbol).first()
+    return cov is not None and cov.start <= start and end <= cov.until
+
+
+def _refresh(symbol, start, end, fetch):
+    """Download the union of the requested span and everything already stored or covered for the symbol,
+    then replace the symbol's bars in one transaction. Returns the number of rejected provider rows."""
+    cov = SymbolCoverage.objects.filter(symbol=symbol).first()
+    stored = Bar.objects.filter(symbol=symbol).aggregate(lo=Min("ts"), hi=Max("ts"))
+    starts, ends = [start], [end]
+    if cov:
+        starts.append(cov.start)
+        ends.append(cov.until)
+    if stored["lo"]:
+        starts.append(stored["lo"].date())
+        ends.append(stored["hi"].date())
+    span_start, span_end = min(starts), max(ends)
+    try:
+        fetched, rejected = fetch(symbol, span_start, span_end)
+    except Exception as e:
+        log.warning("event=fetch_failed symbol=%s error=%s", symbol, type(e).__name__)
+        return 0
+    if not fetched:
+        # Unknown ticker or provider hiccup: keep what is stored and do not record coverage, so a later
+        # request tries again.
+        log.warning("event=fetch_empty symbol=%s", symbol)
+        return rejected
+    now = timezone.now()
+    with transaction.atomic():
+        Bar.objects.filter(symbol=symbol, ts__gte=_day_start(span_start),
+                           ts__lt=_day_start(span_end + timedelta(days=1))).delete()
+        Bar.objects.bulk_create(fetched, update_conflicts=True, unique_fields=["symbol", "ts"],
+                                update_fields=["open", "high", "low", "close", "volume"])
+        # Only days before the fetch day are final; today's bar may not exist yet.
+        until = min(span_end, now.date() - timedelta(days=1))
+        SymbolCoverage.objects.update_or_create(
+            symbol=symbol, defaults={"start": span_start, "until": until, "fetched_at": now})
+    log.info("event=bars_refreshed symbol=%s start=%s end=%s bars=%s", symbol, span_start, span_end, len(fetched))
+    return rejected
+
+
 def load_bars(symbol, start, end, fetch=download):
-    """Returns (warmup_bars, bars, manifest). Fetches from the provider only when coverage is incomplete.
+    """Returns (warmup_bars, bars, manifest). Fetches from the provider only when the span was never fetched.
     Partial data is allowed but labelled in manifest['warnings']; no bars at all raises DataError."""
     end = min(end, datetime.now(UTC).date())
     warm_start = start - timedelta(days=WARMUP_CALENDAR_DAYS)
     rejected = 0
-    if coverage_warnings(_query(symbol, warm_start, end), warm_start, end):
-        try:
-            fetched, rejected = fetch(symbol, warm_start, end)
-        except Exception as e:
-            log.warning("event=fetch_failed symbol=%s error=%s", symbol, type(e).__name__)
-            fetched = []
-        Bar.objects.bulk_create(fetched, ignore_conflicts=True)  # unique (symbol, ts): concurrent fetches are safe
+    if not _covered(symbol, warm_start, end):
+        rejected = _refresh(symbol, warm_start, end, fetch)
 
     rows = _query(symbol, warm_start, end)
     warmup = [b for b in rows if b.ts.date() < start][-WARMUP_BARS:]

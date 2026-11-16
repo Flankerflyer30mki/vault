@@ -81,6 +81,11 @@ class BacktestRunSerializer(_RangeMixin, serializers.ModelSerializer):
 
     def validate(self, data):
         self._validate_range(data)
+        sl, slip = data.get("stop_loss_pct"), data.get("slippage_pct", D("0.0005"))
+        if sl is not None and sl <= slip:
+            # Entry fills at open * (1 + slippage); a stop this tight sits above the open, so every entry
+            # would be stopped out on its first bar.
+            raise serializers.ValidationError({"stop_loss_pct": "stop_loss_pct must be greater than slippage_pct"})
         return data
 
 
