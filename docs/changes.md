@@ -114,11 +114,12 @@ What changed in each phase, at a level useful for review and release notes. Deci
 - **New** `frontend/src/pages/StrategyBuilder.jsx`, `frontend/src/builder/spec.js`, tests `src/builder/spec.test.js`, `src/pages/StrategyBuilder.test.jsx`, `src/api.test.js`, fixture `src/test/fixtures.js`
 - `frontend/src/`: `pages/StrategyList.jsx` (rewritten), `RunTrigger.jsx`, `OptimizationTrigger.jsx`, `RunDetail.jsx`, `Comparison.jsx`, `Dashboard.jsx`, `components.jsx` (`SymbolInput`, `CostModelFields`, cost-aware assumptions), `api.js` (`money(v, currency)`), `App.jsx` (routes), `App.css`
 - `frontend/package.json` (`npm test`; dev deps `vitest`, `jsdom`, `@testing-library/react`, `@testing-library/dom`, `@testing-library/user-event`), `vite.config.js` (`test.environment = jsdom`)
-- `.github/workflows/ci.yml`: `npm test` in the frontend job
+- `.github/workflows/ci.yml`: `npm test` in the frontend job; Node 20 → 24 (the new test tools need ≥ 22). `frontend/Dockerfile` build stage also moved to `node:24-alpine`
 - `README.md`, `CLAUDE.md`, `docs/*` (new `docs/concepts.md`)
 
 ### Operational notes for release
 - No new env vars. Optional overrides: `QUOTA_<TIER>_STRATEGIES`.
+- **Vercel:** set the project's Node.js version to 24.x (or at least 22.x) to match CI; the build itself still works on 20, but keep one version everywhere.
 - **Migrations:** rehearsed on Postgres with 500 runs: upgrade 156 ms, rollback 198 ms, re-upgrade 141 ms, 13/13 checks (see evals).
 - First builder run on a symbol may download a longer history (up to 600 bars of warm-up).
 - The India cost rates are in `costs.py`; confirm them against current exchange circulars before the release.
