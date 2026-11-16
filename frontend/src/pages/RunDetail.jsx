@@ -4,7 +4,12 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import api, { errorText, money, num, pct, toPoints, usePoll } from "../api";
 import { Assumptions, Disclaimer } from "../components";
 
-const SAMPLE_LABEL = { full: "Full period", in: "In-sample (optimised)", out: "Out-of-sample (held out)" };
+const SAMPLE_LABEL = {
+  full: "Full period",
+  in: "In-sample (optimised)",
+  out: "Out-of-sample (held out)",
+  bench: "Benchmark (index buy and hold, no costs)",
+};
 
 function RunDetail() {
   const { id } = useParams();
@@ -96,11 +101,16 @@ function RunDetail() {
               ["Final Value", cur(run.final_value)],
               ["CAGR", pct(run.cagr)],
               ["Sharpe Ratio", num(run.sharpe_ratio)],
+              ["Sortino Ratio", num(run.sortino_ratio)],
+              ["Calmar Ratio", num(run.calmar_ratio)],
               ["Max Drawdown", pct(run.max_drawdown)],
               ["Win Rate (net)", pct(run.win_rate)],
+              ["Round Trips", run.trade_count ?? "N/A"],
+              ["Time in Market", pct(run.exposure, 0)],
               ["Buy & Hold (gross)", pct(run.buy_and_hold_return)],
               ["Commission Paid", cur(run.total_commission)],
               ["Slippage Cost", cur(run.total_slippage)],
+              ["Cost Drag", pct(run.cost_drag)],
               ["Execution Time", `${run.execution_time_ms} ms`],
             ].map(([label, value]) => (
               <div className="metric-card" key={label}>

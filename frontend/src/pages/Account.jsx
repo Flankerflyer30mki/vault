@@ -126,7 +126,7 @@ function Account() {
       <ActionForm
         title="Delete account"
         danger
-        note="Permanently deletes your account and all your strategies, backtests and optimizations. This can't be undone."
+        note="Permanently deletes your account and all your strategies, backtests, comparisons and optimizations. This can't be undone."
         url="/auth/delete-account/"
         submitLabel="Delete my account"
         fields={user.is_guest ? [] : [current]}

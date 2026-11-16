@@ -1,6 +1,5 @@
 from datetime import timedelta
 from decimal import Decimal
-from itertools import product
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -15,10 +14,13 @@ from rest_framework.views import APIView
 from accounts import quotas
 from backtester import costs, spec
 from backtester.engine import ENGINE_VERSION
-from backtester.jobs import frozen_strategy, optimization_status
-from backtester.models import BacktestRun, OptimizationJob, Strategy, Trade
-from backtester.serializers import (BacktestRunSerializer, OptimizationJobSerializer, RunWithCurveSerializer,
+from backtester.jobs import experiment_status, frozen_spec, frozen_strategy
+from backtester.models import BacktestRun, Experiment, Strategy, Trade
+from backtester.serializers import (BacktestRunSerializer, ComparisonCreateSerializer, ExperimentRunSerializer,
+                                    ExperimentSerializer, OptimizationCreateSerializer, RunWithCurveSerializer,
                                     SpecPreviewSerializer, StrategySerializer, TradeSerializer)
+
+BENCHMARK_STRATEGY = "Buy and Hold"  # seeded by migration 0019
 
 
 class Conflict(APIException):
@@ -51,26 +53,29 @@ class IdempotentCreate:
     Keys are per user, so one user's key can never return another user's job. The user's row is locked for
     the duration of the create, which serialises that user's concurrent creates: quota checks are exact and
     a duplicate key waits for the first request instead of racing it."""
+    model = None
+
+    def output(self, obj):
+        return self.get_serializer(obj).data
 
     def create(self, request, *args, **kwargs):
         key = request.headers.get("Idempotency-Key", "")[:64] or None
-        model = self.get_serializer_class().Meta.model
-        mine = model.objects.filter(owner=request.user)
+        mine = self.model.objects.filter(owner=request.user)
         if key and (existing := mine.filter(idempotency_key=key).first()):
-            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+            return Response(self.output(existing), status=status.HTTP_200_OK)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
             with transaction.atomic():
                 get_user_model().objects.select_for_update().get(pk=request.user.pk)
                 if key and (existing := mine.filter(idempotency_key=key).first()):
-                    return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+                    return Response(self.output(existing), status=status.HTTP_200_OK)
                 obj = self.perform_create(serializer, key)
         except IntegrityError:
             if key is None:
                 raise
             obj = mine.get(idempotency_key=key)  # concurrent duplicate won the race
-        return Response(self.get_serializer(obj).data, status=status.HTTP_201_CREATED)
+        return Response(self.output(obj), status=status.HTTP_201_CREATED)
 
 
 class StrategyListCreateView(Throttled, generics.ListCreateAPIView):
@@ -127,11 +132,16 @@ class StrategyCatalogView(Throttled, APIView):
     """What the builder form offers: indicators, operators, limits, cost models, suggested symbols."""
 
     def get(self, request):
+        cfg = settings.VAULT
         return Response({**spec.catalog(),
                          "cost_models": [{"id": k, "label": v} for k, v in costs.COST_MODELS.items()],
                          "india_rates": {k: str(v) for k, v in costs.india_delivery()[2].items()},
                          "suggested_symbols": costs.SUGGESTED_SYMBOLS,
-                         "custom_code_enabled": settings.VAULT["ALLOW_CUSTOM_CODE"]})
+                         "custom_code_enabled": cfg["ALLOW_CUSTOM_CODE"],
+                         "limits": {"max_grid": cfg["MAX_GRID"], "max_grid_params": cfg["MAX_GRID_PARAMS"],
+                                    "max_compare_strategies": cfg["MAX_COMPARE_STRATEGIES"],
+                                    "max_compare_symbols": cfg["MAX_COMPARE_SYMBOLS"]},
+                         "benchmarks": cfg["BENCHMARKS"]})
 
 
 class SpecPreviewView(Throttled, APIView):
@@ -144,12 +154,13 @@ class SpecPreviewView(Throttled, APIView):
         ser.is_valid(raise_exception=True)
         s = ser.validated_data["spec"]
         return Response({"spec": s, "python": spec.render_python(s), "warmup_bars": spec.warmup_bars(s),
-                         "hash": spec.spec_hash(s)})
+                         "hash": spec.spec_hash(s), "tunable_params": spec.tunable_params(s)})
 
 
 class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
     write_scope = "jobs"
     serializer_class = BacktestRunSerializer
+    model = BacktestRun
 
     def get_queryset(self):
         # The list serializer shows neither the curve nor the code; don't load them.
@@ -159,8 +170,9 @@ class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreate
     def perform_create(self, serializer, key):
         quotas.check(self.request.user, "run")
         admit(1)
+        # Started by hand: priority 0, so it's claimed before any queued experiment children (D-059).
         return serializer.save(owner=self.request.user, **frozen_strategy(serializer.validated_data["strategy"]),
-                               engine_version=ENGINE_VERSION, idempotency_key=key)
+                               priority=BacktestRun.INTERACTIVE, engine_version=ENGINE_VERSION, idempotency_key=key)
 
 
 class BacktestRunDetailView(Throttled, generics.RetrieveAPIView):
@@ -179,46 +191,104 @@ class TradeListView(Throttled, generics.ListAPIView):
         return Trade.objects.filter(run=run).order_by("ts", "id")
 
 
-class OptimizationJobListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
+class ExperimentListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
+    """POST fans out one child run per combination or cell (priority 1); GET lists the user's experiments.
+    Also mounted at /api/optimizations/ (default_kind="optimization") so earlier clients keep working."""
     write_scope = "jobs"
-    serializer_class = OptimizationJobSerializer
+    model = Experiment
+    default_kind = None
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            kind = self.default_kind or self.request.data.get("kind") or Experiment.OPTIMIZATION
+            return ComparisonCreateSerializer if kind == Experiment.COMPARISON else OptimizationCreateSerializer
+        return ExperimentSerializer
+
+    def output(self, obj):
+        return ExperimentSerializer(obj, context=self.get_serializer_context()).data
 
     def get_queryset(self):
-        # Status is derived from the child runs; load only what optimization_status reads, never the curves.
-        return OptimizationJob.objects.filter(owner=self.request.user).select_related("strategy").prefetch_related(
-            Prefetch("runs", queryset=BacktestRun.objects.only("id", "optimization_id", "status", "sample"))
+        # Status is derived from the child runs; load only what experiment_status reads, never the curves.
+        qs = Experiment.objects.filter(owner=self.request.user).select_related("strategy").prefetch_related(
+            Prefetch("runs", queryset=BacktestRun.objects.only("id", "experiment_id", "status", "sample"))
         ).order_by("-created_at")
+        return qs.filter(kind=self.default_kind) if self.default_kind else qs
 
     def perform_create(self, serializer, key):
-        quotas.check(self.request.user, "optimization")
-        d = serializer.validated_data
-        grid = list(product(d["stop_loss_options"], d["take_profit_options"]))
+        quotas.check(self.request.user, "experiment")
+        if isinstance(serializer, ComparisonCreateSerializer):
+            return self._create_comparison(serializer.validated_data, key)
+        return self._create_optimization(serializer.validated_data, key)
+
+    def _create_optimization(self, d, key):
+        grid = [(params, frozen, sl, tp) for params, frozen in d["combos"]
+                for sl in d["stop_loss_options"] for tp in d["take_profit_options"]]
         admit(len(grid) + 1)  # +1: the out-of-sample run
-        job = serializer.save(owner=self.request.user, idempotency_key=key)
-        frozen = frozen_strategy(job.strategy)
+        strategy = d["strategy"]
+        job = Experiment.objects.create(
+            owner=self.request.user, kind=Experiment.OPTIMIZATION, strategy=strategy, symbol=d["symbol"],
+            start_date=d["start_date"], end_date=d["end_date"], split_date=d["split_date"],
+            starting_cash=d["starting_cash"], cost_model=d["cost_model"], stop_loss_options=d["stop_loss_options"],
+            take_profit_options=d["take_profit_options"], idempotency_key=key,
+            config={"param_grid": d["param_grid"], "skipped": d["skipped"]})
+        base = frozen_strategy(strategy)
         # Flat: the model's default fee. India: statutory charges with zero brokerage (a discount broker's delivery).
         buy, sell = costs.rates(job.cost_model, Decimal("0.001") if job.cost_model == costs.FLAT else 0)
         BacktestRun.objects.bulk_create([BacktestRun(
-            owner=self.request.user, strategy=job.strategy, optimization=job, sample="in", symbol=job.symbol,
-            start_date=job.start_date, end_date=job.split_date - timedelta(days=1), starting_cash=job.starting_cash,
-            stop_loss_pct=Decimal(sl), take_profit_pct=Decimal(tp), cost_model=job.cost_model,
-            commission_pct=buy, sell_commission_pct=sell, **frozen, engine_version=ENGINE_VERSION,
-        ) for sl, tp in grid])
+            owner=self.request.user, strategy=strategy, experiment=job, sample="in", priority=BacktestRun.BATCH,
+            symbol=job.symbol, start_date=job.start_date, end_date=job.split_date - timedelta(days=1),
+            starting_cash=job.starting_cash, stop_loss_pct=Decimal(sl), take_profit_pct=Decimal(tp),
+            cost_model=job.cost_model, commission_pct=buy, sell_commission_pct=sell,
+            grid_params={**params, "stop_loss_pct": sl, "take_profit_pct": tp},
+            **(frozen_spec(frozen) if frozen is not None else base), engine_version=ENGINE_VERSION,
+        ) for params, frozen, sl, tp in grid])
+        return job
+
+    def _create_comparison(self, d, key):
+        strategies, symbols = d["strategies"], d["symbols"]
+        benchmarks = {}
+        for sym in symbols:  # one index per currency present; unknown currencies get none
+            cur = costs.currency(sym)
+            if cur in settings.VAULT["BENCHMARKS"]:
+                benchmarks.setdefault(cur, settings.VAULT["BENCHMARKS"][cur])
+        admit(len(strategies) * len(symbols) + len(benchmarks))
+        fmt = lambda v: None if v is None else str(v)  # noqa: E731  (JSON can't hold Decimal)
+        job = Experiment.objects.create(
+            owner=self.request.user, kind=Experiment.COMPARISON, start_date=d["start_date"], end_date=d["end_date"],
+            starting_cash=d["starting_cash"], cost_model=d["cost_model"], idempotency_key=key,
+            config={"strategies": [s.id for s in strategies], "symbols": symbols, "benchmarks": benchmarks,
+                    "commission_pct": fmt(d["commission_pct"]), "sell_commission_pct": fmt(d["sell_commission_pct"]),
+                    "slippage_pct": fmt(d["slippage_pct"]), "stop_loss_pct": fmt(d.get("stop_loss_pct")),
+                    "take_profit_pct": fmt(d.get("take_profit_pct"))})
+        common = dict(owner=self.request.user, experiment=job, priority=BacktestRun.BATCH, start_date=job.start_date,
+                      end_date=job.end_date, starting_cash=job.starting_cash, engine_version=ENGINE_VERSION)
+        runs = [BacktestRun(**common, strategy=s, sample="full", symbol=sym, cost_model=d["cost_model"],
+                            commission_pct=d["commission_pct"], sell_commission_pct=d["sell_commission_pct"],
+                            slippage_pct=d["slippage_pct"], stop_loss_pct=d.get("stop_loss_pct"),
+                            take_profit_pct=d.get("take_profit_pct"), **frozen_strategy(s))
+                for s in strategies for sym in symbols]
+        if benchmarks:
+            # The benchmark is just another child: buy-and-hold on the index, no costs. Same queue, same data path.
+            hold = Strategy.objects.get(name=BENCHMARK_STRATEGY, is_builtin=True)
+            runs += [BacktestRun(**common, strategy=hold, sample="bench", symbol=index, commission_pct=0,
+                                 sell_commission_pct=0, slippage_pct=0, **frozen_strategy(hold))
+                     for index in benchmarks.values()]
+        BacktestRun.objects.bulk_create(runs)
         return job
 
 
-class OptimizationJobDetailView(Throttled, generics.RetrieveAPIView):
-    """One call returns the job plus every child run with its equity curve (no N+1 polling)."""
-    serializer_class = OptimizationJobSerializer
+class ExperimentDetailView(Throttled, generics.RetrieveAPIView):
+    """One call returns the experiment plus every child run with a downsampled curve (no N+1 polling)."""
+    serializer_class = ExperimentSerializer
 
     def get_queryset(self):
-        return OptimizationJob.objects.filter(owner=self.request.user).select_related("strategy") \
+        return Experiment.objects.filter(owner=self.request.user).select_related("strategy") \
             .prefetch_related("runs__strategy")
 
     def retrieve(self, request, *args, **kwargs):
         job = self.get_object()
         data = self.get_serializer(job).data
-        data["runs"] = RunWithCurveSerializer(sorted(job.runs.all(), key=lambda r: r.id), many=True).data
+        data["runs"] = ExperimentRunSerializer(sorted(job.runs.all(), key=lambda r: r.id), many=True).data
         return Response(data)
 
 
@@ -234,6 +304,28 @@ def _run_summary(r):
             "failure_category": r.failure_category}
 
 
+def _experiment_summary(job):
+    runs = list(job.runs.all())
+    children = [r for r in runs if r.sample in ("in", "full")]
+    out = {"id": job.id, "kind": job.kind, "status": experiment_status(job), "created_at": job.created_at,
+           "runs_total": len(children), "runs_done": sum(r.status not in BacktestRun.ACTIVE for r in children)}
+    if job.kind == Experiment.COMPARISON:
+        n_strat, n_sym = len(job.config.get("strategies", [])), len(job.config.get("symbols", []))
+        out["title"] = f"{n_strat} strateg{'y' if n_strat == 1 else 'ies'} × {n_sym} symbol{'s' if n_sym != 1 else ''}"
+        out["symbols"] = job.config.get("symbols", [])
+        return out
+    oos = next((r for r in runs if r.sample == "out"), None)
+    out.update({
+        "title": job.strategy.name if job.strategy_id else "Optimization", "symbol": job.symbol,
+        "strategy_name": job.strategy.name if job.strategy_id else None,
+        "out_of_sample": None if oos is None else {
+            "status": oos.status, "sharpe_ratio": oos.sharpe_ratio,
+            "total_return": float(oos.final_value / oos.starting_cash - 1) if oos.final_value is not None else None,
+            "buy_and_hold_return": oos.buy_and_hold_return, "grid_params": oos.grid_params,
+            "stop_loss_pct": oos.stop_loss_pct, "take_profit_pct": oos.take_profit_pct}})
+    return out
+
+
 class DashboardView(Throttled, APIView):
     """Everything the dashboard shows, in one request. Deliberately no 'best by Sharpe' ranking (see D-022)."""
 
@@ -242,36 +334,21 @@ class DashboardView(Throttled, APIView):
         runs = (BacktestRun.objects.filter(owner=user).select_related("strategy")
                 .only("id", "strategy__name", "symbol", "status", "start_date", "end_date", "created_at",
                       "bars_processed", "bars_total", "final_value", "starting_cash", "buy_and_hold_return",
-                      "sharpe_ratio", "failure_category", "optimization_id"))
-        active = list(runs.filter(optimization__isnull=True, status__in=BacktestRun.ACTIVE).order_by("-created_at"))
-        recent = list(runs.filter(optimization__isnull=True).exclude(status__in=BacktestRun.ACTIVE)
+                      "sharpe_ratio", "failure_category", "experiment_id"))
+        active = list(runs.filter(experiment__isnull=True, status__in=BacktestRun.ACTIVE).order_by("-created_at"))
+        recent = list(runs.filter(experiment__isnull=True).exclude(status__in=BacktestRun.ACTIVE)
                       .order_by("-created_at")[:10])
-        opts = list(OptimizationJob.objects.filter(owner=user).select_related("strategy").prefetch_related(
+        exps = list(Experiment.objects.filter(owner=user).select_related("strategy").prefetch_related(
             Prefetch("runs", queryset=BacktestRun.objects.only(
-                "id", "optimization_id", "status", "sample", "sharpe_ratio", "final_value", "starting_cash",
-                "buy_and_hold_return", "stop_loss_pct", "take_profit_pct")))
+                "id", "experiment_id", "status", "sample", "sharpe_ratio", "final_value", "starting_cash",
+                "buy_and_hold_return", "stop_loss_pct", "take_profit_pct", "grid_params")))
             .order_by("-created_at")[:5])
-        optimizations = []
-        for job in opts:
-            oos = next((r for r in job.runs.all() if r.sample == "out"), None)
-            optimizations.append({
-                "id": job.id, "strategy_name": job.strategy.name, "symbol": job.symbol,
-                "status": optimization_status(job), "created_at": job.created_at,
-                "runs_total": sum(1 for r in job.runs.all() if r.sample == "in"),
-                "runs_done": sum(1 for r in job.runs.all() if r.sample == "in" and r.status not in BacktestRun.ACTIVE),
-                "out_of_sample": None if oos is None else {
-                    "status": oos.status, "sharpe_ratio": oos.sharpe_ratio,
-                    "total_return": (float(oos.final_value / oos.starting_cash - 1)
-                                     if oos.final_value is not None else None),
-                    "buy_and_hold_return": oos.buy_and_hold_return,
-                    "stop_loss_pct": oos.stop_loss_pct, "take_profit_pct": oos.take_profit_pct},
-            })
         strategies = Strategy.objects.filter(quotas.visible_strategies_q(user)).order_by("-is_builtin", "-created_at")
         return Response({
             "quota": {"tier": user.tier, "limits": quotas.limits(user), "usage": quotas.usage(user)},
             "active_runs": [_run_summary(r) for r in active],
             "recent_runs": [_run_summary(r) for r in recent],
-            "optimizations": optimizations,
+            "experiments": [_experiment_summary(job) for job in exps],
             "strategies": [{"id": s.id, "name": s.name, "kind": s.kind, "is_builtin": s.is_builtin}
                            for s in strategies.only("id", "name", "kind", "is_builtin")[:20]],
             "custom_code_enabled": settings.VAULT["ALLOW_CUSTOM_CODE"],

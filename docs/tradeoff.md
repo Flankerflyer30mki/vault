@@ -161,3 +161,46 @@ Status: done in Phase 2 (D-039); see below.
 | Gained | Gave up |
 |---|---|
 | Builder logic tested where bugs live (form ↔ spec, error placement, limits); 13 tests in ~8 s | 5 dev dependencies (Vitest, jsdom, Testing Library). Production `npm audit` stays at 0; the dev tree has 3 moderate advisories, all in `minimatch` under eslint (already a dependency before Phase 2), none from the new packages |
+
+## Phase 3
+
+### D-055 · One `Experiment` model
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| One fan-out/fan-in mechanism; Phase 5's agent reuses it | A rename migration (hand-written, rehearsed: 221 ms up, 313 ms down) and ~110 renamed references | Kinds diverge so much that `config` JSON hides real structure → split per-kind tables |
+| Kind-specific settings in `config` JSON, no schema change per kind | `config` isn't validated by the database, only by the serializers | — |
+
+### D-056 · Strategies × symbols matrix
+| Gained | Gave up |
+|---|---|
+| "Which strategy works on which stock" in one view | Every cell shares one period, cost model and stop/target; per-cell settings would need separate experiments |
+| Benchmarks per currency for free (D-065) | Mixed-currency comparisons show no single currency; values are compared as percentages |
+
+### D-057 / D-064 · Parameter search with linked paths
+| Gained | Gave up |
+|---|---|
+| Searches the strategy's own parameters; invalid pairs skipped, not failed | Linked paths can't be split: to test "different EMA for entry and exit", build that as a separate strategy |
+| Each combination is a frozen, hashed spec: every result reproducible | The 25-run limit counts skipped combinations too, so a grid with many invalid pairs uses its budget less efficiently |
+
+### D-058 · One job per child + per-worker cache
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Children still run in parallel, retry and report progress individually | The cache is per process: with several workers, each warms its own (measured hit rate is for one worker) | Many workers → a shared cache (Redis) or sending a batch's children to the same worker |
+| 32–36% less time per child after D-063 (measured); identical results | Memory: up to 16 bar sets and 128 indicator series per worker | Memory pressure on small instances → lower the LRU sizes |
+| A re-download can never serve stale bars (key includes `fetched_at`) | Strategies with different warm-ups don't share bars (the key includes warm-up) | — |
+
+### D-059 · Priority lanes
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| A hand-started run waits for at most the run in progress (measured: 22 ms vs 1.26 s behind a batch) | A steady stream of single runs delays batches (bounded by per-account quotas) | Phase 5: several agent experiments at once → round-robin between batches |
+| One query, same `SKIP LOCKED`, one new index | No pre-emption: a long running child still finishes first | — |
+
+### D-063 · Time-based heartbeat
+| Gained | Gave up |
+|---|---|
+| Per-child time 174 → 37–39 ms; no progress writes for fast runs | Progress on the run page updates once a second instead of every 50 bars (invisible for runs that finish in milliseconds) |
+
+### D-062 · Downsampled curves
+| Gained | Gave up |
+|---|---|
+| ≤ 500 points per child; peaks and troughs kept | Hover values on experiment charts are approximate between kept points; the run's own page has the full curve |

@@ -47,7 +47,7 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-037 | 2 | Saved-strategy limits per tier: guest 5, unverified 20, verified 100 | Accepted |
 | D-038 | 2 | India as a first-class market: NSE/BSE symbols, INR, an Indian delivery cost preset | Accepted |
 | D-039 | 2 | Frontend component tests with Vitest and React Testing Library | Accepted |
-| D-040 | Later | Options backtesting: decide after Phase 3 | Deferred |
+| D-040 | Later | Options backtesting: decide after Phase 3 | Superseded by D-051 |
 | D-041 | 2 | Keep a concepts glossary (`docs/concepts.md`) for interview revision | Accepted |
 | D-042 | 2 | Signals without position state: exit wins over entry on the same bar | Accepted |
 | D-043 | 2 | Dynamic warm-up: longest lookback, 3× for smoothed indicators, capped at 600 bars | Accepted |
@@ -57,6 +57,23 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-047 | 2 | Fee rates stored with 9 decimals; separate buy and sell rates | Accepted |
 | D-048 | 2 | Tests may never reach the data provider | Accepted |
 | D-049 | 2 | Currency inferred from the symbol, display only | Accepted |
+| D-050 | All | Target roles: backend, full-stack, AI/agentic; fintech is the domain, not the role | Accepted |
+| D-051 | All | Drop options backtesting | Accepted |
+| D-052 | All | No ML feature for its own sake | Accepted |
+| D-053 | 3.5 | New phase: engineering hardening (load test, observability, OpenAPI, shared throttle cache) | Accepted |
+| D-054 | 3 | Phase 3 framed as a backend problem, with only light quant | Accepted |
+| D-055 | 3 | One batch model: `OptimizationJob` becomes `Experiment` (kind = comparison or optimization) | Accepted |
+| D-056 | 3 | Comparison = strategies × symbols matrix, at most 25 cells, plus an index benchmark | Accepted |
+| D-057 | 3 | Parameter search over builder spec values; invalid combinations skipped and reported | Accepted |
+| D-058 | 3 | One job per child run, plus a per-worker cache of bars and indicator series | Accepted |
+| D-059 | 3 | Priority lanes: runs started by hand are claimed before batch children | Accepted |
+| D-060 | 3 | New metrics (Sortino, Calmar, exposure, trades, cost drag) and an index benchmark | Accepted |
+| D-061 | 3 | Walk-forward validation deferred; the single 70/30 split stays | Deferred |
+| D-062 | 3 | Experiment pages get downsampled equity curves (≤ 500 points, extremes kept) | Accepted |
+| D-063 | 3 | Heartbeat by time (≤ 1 per second), not every 50 bars | Accepted |
+| D-064 | 3 | Tunable parameters are grouped by indicator instance; a search moves linked paths together | Accepted |
+| D-065 | 3 | The benchmark is an ordinary child run of a built-in "Buy and Hold" strategy on the index | Accepted |
+| D-066 | 3 | Hand-written rename migration; `/api/optimizations/` kept as an alias; quota renamed `experiments_per_day` | Accepted |
 
 ---
 
@@ -380,3 +397,129 @@ AND/OR, are the standard way retail tools (for example Zerodha Streak, TradingVi
   without a currency sign). Never used in a calculation.
 - **Why:** asking Yahoo for metadata costs a network call per symbol and fails often. A wrong currency sign would be worse
   than none, hence "unknown" rather than a USD default for foreign exchanges.
+
+---
+
+# Direction after Phase 2 (agreed 2026-11-16)
+
+## D-050 · Target roles shape the roadmap
+- **Decision:** Vault is **an engineering project set in a fintech domain**. The target roles are backend, full-stack and
+  AI/agentic engineering, including at fintech companies, where these are also the job titles.
+- **Consequence:** prefer work that shows engineering depth (concurrency, reliability, measured performance, observability,
+  agent evaluation) over more market features. The domain work already done (India costs, INR, long-only rationale,
+  reproducibility) is kept as domain credibility and isn't extended for its own sake.
+
+## D-051 · Drop options backtesting (supersedes D-040)
+- **Why:** a large domain subsystem (bhavcopy data pipeline, expiries, lot sizes, margin) that adds little backend or AI
+  signal and would take time from the AI phases.
+
+## D-052 · No ML feature for its own sake
+- **Why:** price prediction overfits, and interviewers know it. ML only if it falls naturally out of Phase 5, measured
+  against a baseline.
+
+## D-053 · New Phase 3.5: engineering hardening
+- **Scope:** a load test with real capacity numbers (runs per minute by worker count, p50/p95 API latency, queue throughput),
+  observability (`/metrics`, request IDs in logs, error tracking), OpenAPI docs, and throttle counters in a shared cache.
+- **Why:** "I measured what the system handles" is one of the strongest backend interview lines, and Vault can't say it yet.
+
+## D-054 · Phase 3 is framed as a backend problem
+- **Decision:** comparison and optimization are built as batch orchestration (fan-out, fan-in, partial failure, fair
+  scheduling, shared computation), with only light quant (a benchmark and a few extra risk metrics).
+
+---
+
+# Phase 3 · Comparison and optimization (approved 2026-11-16)
+
+Starting point: optimization covers one strategy and only stop-loss × take-profit. Every child run reloads its bars and
+recomputes its indicators. The queue is strictly first-in-first-out. There's no way to compare strategies with each other,
+which was the original question that started the overhaul ("the optimization is intra-strategy; what about inter-strategy?").
+
+## D-055 · One batch model: `Experiment`
+- **Options:** (A) rename `OptimizationJob` to a general `Experiment` with a `kind` (comparison or optimization) and a
+  `config` JSON; (B) add a separate `ComparisonJob` next to it.
+- **Decision:** A. Child runs link to their experiment; status is still derived from the children, never stored.
+- **Why:** one fan-out/fan-in mechanism for every batch, which Phase 5's agent will also use. B would mean two nearly identical
+  systems, and a third for the agent.
+- **Cost:** a rename migration on an existing table (rehearsed like the others). `/api/optimizations/` stays as an alias of
+  `/api/experiments/` for optimizations, so existing clients and tests keep working.
+
+## D-056 · Comparison is a strategies × symbols matrix
+- **Options:** (A) N strategies on one symbol; (B) strategies × symbols, at most 25 cells.
+- **Decision:** B, shown as a heatmap table plus overlaid equity curves, with an index benchmark (D-060).
+- **Why:** answers "which strategy works on which stocks", and the larger fan-out is a better orchestration problem.
+
+## D-057 · Parameter search over builder specs
+- **Decision:** an optimization of a builder strategy can vary any numeric indicator parameter, addressed by its path
+  (`entry.all[0].left.params.period`), combined with the stop-loss × take-profit grid. Each combination is a copy of the spec,
+  validated on its own. A value out of range rejects the request (400, with the path); a **combination** that's invalid only
+  together (for example MACD fast ≥ slow) is **skipped and reported**, not failed. The limit stays 25 combinations until the
+  Phase 3.5 load test measures what the system handles. Code strategies keep the stop-loss × take-profit grid only.
+- **Why:** this is the optimization users actually want ("which EMA lengths?"), and a spec can be rewritten safely where code can't.
+
+## D-058 · One job per child, plus a per-worker cache
+- **Options:** (A) each child independent, reloading everything (today); (B) the whole batch as one job; (C) A plus a
+  per-worker cache of bars and indicator series.
+- **Decision:** C. Bars are cached by `(symbol, dates, warm-up, coverage fetched_at)`, so a re-download invalidates them;
+  indicator series by `(data hash, indicator, params)`. Both caches are bounded (LRU) and per process.
+- **Why:** the job stays small, so batches still spread across workers, retry per child and report progress per child, while
+  the duplicated work disappears. B would put a whole batch on one worker and lose it all on one crash. The hit rate and
+  the time saved are measured in evals.
+
+## D-059 · Priority lanes, not per-user fairness
+- **Context:** an account is one person, and the demo's other users are a few recruiters on guest accounts. Contention between
+  accounts is rare, and per-account quotas already cap it. The contention that does happen is **within one account**: a batch
+  (and, in Phase 5, the agent's batches) queued ahead of a quick run the same person starts by hand.
+- **Options:** (A) first come, first served; (B) priority lanes; (C) B plus round-robin between batches.
+- **Decision:** B. Runs started by hand get priority 0 and batch children priority 1; the claim query orders by
+  `(priority, id)` with the same `SKIP LOCKED`. Nothing is pre-empted: the running job always finishes. Revisit C in Phase 5,
+  when the agent runs several experiments at once.
+- **Example:** a 25-run comparison is queued, and you start one backtest while child 4 is running. FIFO starts your run after
+  the remaining ~22 children (~22 s at ~1 s each); priority lanes start it as soon as child 4 finishes (~1 s).
+- **Interview angle:** interactive work ahead of background batch work, the same pattern as interactive and batch queues in real systems.
+
+## D-060 · Light quant: metrics and benchmark
+- **Decision:** add Sortino, Calmar, exposure (share of bars in the market), number of round trips and cost drag (costs as a
+  share of starting cash), all derived from the same ledger. Comparisons add an **index benchmark** per currency (NIFTY 50
+  `^NSEI` for INR, S&P 500 `^GSPC` for USD) as an extra child run of a built-in buy-and-hold strategy with zero costs.
+- **Why:** cheap, standard, and the benchmark reuses the data pipeline and the queue instead of a special path.
+
+## D-061 · Walk-forward validation deferred
+- **Decision:** keep the single chronological 70/30 split. The `Experiment` model leaves room for stages, so walk-forward can
+  be added later without a redesign. (D-054: light quant.)
+
+## D-062 · Downsampled curves for experiment pages
+- **Decision:** the experiment detail API returns each child's equity curve reduced to at most ~500 points, keeping each
+  bucket's minimum and maximum so peaks and drawdowns stay visible. A single run's page still gets the full curve.
+- **Why:** 25 curves × 2,500 points is ~60k points to send and draw; the chart can't show more than its pixel width anyway.
+
+## Phase 3 · Implementation decisions made while building
+
+## D-063 · Heartbeat by time, not by bar count (found by profiling)
+- **Context:** after adding the worker cache, a 25-child experiment got only 12–13% faster although the cache hit rate was
+  high. Profiling one child (`cProfile` on `jobs.execute`) showed **153 of 219 ms (70%) in 41 progress `UPDATE`s**, one every
+  50 bars. That interval was sized when strategies ran in a sandbox and a run took seconds; with interpreted specs a run's
+  simulation takes milliseconds, so the bookkeeping cost more than the work.
+- **Decision:** heartbeat (and progress) at most once per second. Stale recovery waits 120 s, so this is still far more often
+  than needed; a fast run now writes no progress rows at all, a slow run still beats every second (both tested).
+- **Result:** median per child 174 → 37–39 ms; 25-child wall time 5.7 → 2.4 s; the cache's own saving rose from 13–15% to
+  32–36% once the heartbeat stopped dominating.
+- **Interview angle:** measure before optimising: the cache was the planned fix, but the profile found the real cost.
+
+## D-064 · Linked parameters
+- **Context:** templates use the same indicator in both rules (EMA 12 crosses above EMA 26 to buy, below to sell). Varying the
+  entry's EMA without the exit's would test "enter on EMA 10, exit on EMA 12", which nobody asked for.
+- **Decision:** `spec.tunable_params` groups every path of one indicator instance (same indicator and parameters) under one
+  label, such as `ema(12).period` with two paths or `macd(12, 26, 9).fast` with four. A search must name a whole group; half
+  a group is rejected.
+
+## D-065 · Benchmark as an ordinary child run
+- **Decision:** a built-in builder strategy "Buy and Hold" (enter on the first bar, never exit; migration `0019`) runs on the
+  index with zero costs as one more child (`sample="bench"`). No special code path: same queue, data pipeline, metrics and
+  pages. It also appears as a template users can pick.
+
+## D-066 · Rename mechanics and compatibility
+- **Decision:** migration `0018` is hand-written (rename model and field; constraints and the claim index dropped and recreated),
+  because `makemigrations` can't tell a rename from "drop and create" without asking, and guessing wrong loses data.
+  `/api/optimizations/` stays as an alias of `/api/experiments/` (limited to optimizations) so the Phase 0–2 tests run
+  unchanged against it. The quota key becomes `experiments_per_day` (env `QUOTA_<TIER>_EXPERIMENTS_PER_DAY`); comparisons and
+  optimizations share it.

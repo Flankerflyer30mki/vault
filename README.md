@@ -15,7 +15,7 @@ Vault runs a trading strategy against historical daily market data and reports r
 - [Costs and markets](#costs-and-markets)
 - [Market data](#market-data)
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
-- [Optimization and out-of-sample evaluation](#optimization-and-out-of-sample-evaluation)
+- [Experiments: comparisons and optimizations](#experiments-comparisons-and-optimizations)
 - [Accounts and workspaces](#accounts-and-workspaces)
 - [Security](#security)
 - [Run locally](#run-locally)
@@ -98,7 +98,7 @@ A builder strategy is a **JSON spec**, validated against an allowlist and **inte
 - **Validation** reports every problem at once, keyed by path (`entry.all[0].left.params.period`), and the UI shows each message on its field. Unknown keys, booleans posing as numbers, NaN and specs over 8 KB are rejected.
 - **Reproducibility:** each run stores a frozen copy of the spec and the SHA-256 of its canonical JSON (sorted keys). Editing a strategy never changes past runs. A strategy that has runs can't be deleted (`409`).
 - **"View as Python"** renders the spec as readable Python for people. Vault never executes that text.
-- **Templates:** six built-in builder strategies (migration `0017`): EMA crossover, RSI mean reversion, MACD signal cross, Bollinger breakout, Donchian breakout and trend-filtered RSI. Built-ins are read-only; "Use as template" copies one into your workspace.
+- **Templates:** seven built-in builder strategies: EMA crossover, RSI mean reversion, MACD signal cross, Bollinger breakout, Donchian breakout and trend-filtered RSI (migration `0017`), plus Buy and Hold (`0019`, also used as the comparison benchmark). Built-ins are read-only; "Use as template" copies one into your workspace.
 - **Endpoints:** `GET/POST /api/strategies/`, `GET/PATCH/DELETE /api/strategies/<id>/`, `GET /api/strategies/catalog/` (indicators, operators, limits, cost models, suggested symbols; the form is built from this, so the allowlist lives in one place), `POST /api/strategies/preview/` (validate and render without saving; the form calls it as you type).
 
 ## Accounting and metrics
@@ -108,6 +108,8 @@ A builder strategy is a **JSON spec**, validated against an allowlist and **inte
 - **Every metric comes from that one ledger equity curve.** Nothing recomputes cash anywhere else.
 - **CAGR** uses the actual first and last simulated bar dates, not the requested dates. It is `null` if the result is undefined.
 - **Sharpe** uses daily equity returns with a risk-free rate of 0, annualised with √252. It is `null` when volatility is zero.
+- **Sortino** is the same with downside deviation (losing days only, target 0) in place of the standard deviation; `null` with no losing day. **Calmar** is CAGR ÷ max drawdown; `null` with no drawdown.
+- **Exposure** is the share of bars that closed with a position open. **Round trips** counts closed buy-sell pairs. **Cost drag** is commission plus slippage as a share of starting cash.
 - **Max drawdown** is measured peak to trough on equity.
 - **Win rate** is calculated per round trip, **net of commission and slippage**. It is `null` when no round trip has closed.
 - **Buy & hold** is a gross benchmark: first open to last close over the same bars.
@@ -153,7 +155,9 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 
 - **Durable.** The run row is the job. If the API or the worker restarts, the job is not lost.
 - **At-least-once execution with idempotent finalisation.** Trades and results are written in one transaction, and only if the worker still owns the run (`status = running AND worker_id = me`). A retry replaces earlier trades instead of adding to them.
-- **Stale-job recovery.** Workers update a heartbeat every 50 bars. A run with no heartbeat for `STALE_AFTER_S` (120 s) goes back to `queued`, up to `MAX_ATTEMPTS` (3) attempts in total, and then fails as `infrastructure`.
+- **Claim order.** Workers claim `ORDER BY priority, id`: runs a person starts by hand (priority 0) go before experiment children (priority 1), first-in-first-out within each lane. Nothing is pre-empted; a running job always finishes. Measured: a hand-started run behind a 25-child batch starts in 25 ms instead of 1.26 s.
+- **Stale-job recovery.** Workers update a heartbeat at most once per second while a run is in progress (a run that finishes in under a second writes none). A run with no heartbeat for `STALE_AFTER_S` (120 s) goes back to `queued`, up to `MAX_ATTEMPTS` (3) attempts in total, and then fails as `infrastructure`.
+- **Per-worker caches.** Each worker keeps a small LRU of loaded bars (keyed by symbol, dates, warm-up and the coverage's `fetched_at`, so a re-download is never served stale) and of indicator series (keyed by the data hash). Children of one experiment share them; results are identical with or without the cache.
 - **Strategy errors are not retried.** An exception, a bad return value or a timeout fails the run immediately with a safe message.
 - **Bounded concurrency.** Each worker process runs one job at a time. To scale, run more worker processes. The API never starts threads or subprocesses.
 - **Progress** is stored on the run row (`bars_processed / bars_total`). The UI shows "progress not available" rather than a fake 0%.
@@ -161,8 +165,10 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | Limit | Default | Scope |
 |---|---|---|
 | `MAX_ACTIVE_RUNS` | 50 queued+running | global (soft cap). The API returns `503` when it is reached |
-| `MAX_GRID` | 25 combinations | per optimization, checked server-side |
-| up to 10 values | per stop-loss / take-profit list | per request |
+| `MAX_GRID` | 25 child runs | per experiment (optimization combinations or comparison cells), checked server-side |
+| `MAX_GRID_PARAMS` | 4 | strategy parameters searched at once |
+| `MAX_COMPARE_STRATEGIES` / `MAX_COMPARE_SYMBOLS` | 10 / 10 | per comparison |
+| up to 10 values | per stop-loss / take-profit / parameter list | per request |
 | `MAX_RANGE_DAYS` | 3660 | per request |
 | `MAX_CODE_CHARS` | 10 000 | per code strategy |
 | builder spec | 1–10 conditions per group, periods 2–200, 8 KB, warm-up ≤ 600 bars | per builder strategy |
@@ -170,32 +176,39 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | request body | 64 KB | per request |
 | `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per user** when signed in, per API process (in-memory cache) |
 | `THROTTLE_AUTH` / `THROTTLE_GUEST` | 10 per min / 5 per hour | **per IP**: login, signup and password reset / guest creation |
-| Per-user quotas | see [Accounts](#accounts-and-workspaces) | active jobs, backtests and optimizations per rolling 24 h, by tier. The API returns `429` naming the limit |
+| Per-user quotas | see [Accounts](#accounts-and-workspaces) | active jobs, backtests and experiments per rolling 24 h, by tier. The API returns `429` naming the limit |
 | `NUM_PROXIES` | 1 on Render, else 0 (compose sets 1 for its nginx) | proxies in front of the API. Throttling identifies the client from the address the last trusted proxy appended, so a client cannot dodge limits by sending its own `X-Forwarded-For` |
-| `Idempotency-Key` header | optional | repeating a `POST /runs/` or `/optimizations/` with the same key returns the original job. Keys are per user |
+| `Idempotency-Key` header | optional | repeating a `POST /runs/` or `/experiments/` with the same key returns the original job. Keys are per user |
 
-## Optimization and out-of-sample evaluation
+## Experiments: comparisons and optimizations
+
+An **experiment** is a batch of ordinary backtests (child runs) created by one request and read together. Its status is derived from the children and never stored: `running`, `completed`, `partially_completed` (some children failed) or `failed` (none completed). It counts as one active job and one experiment per 24 h against the quota. `POST /api/experiments/` takes `kind: "comparison"` or `kind: "optimization"`; `/api/optimizations/` remains as an alias for optimizations.
+
+### Comparison
+
+Strategies × symbols (at most 25 cells) over one period, cash amount, cost model and optional stop/target. Each cell is a normal run you can open. For every currency present, an **index benchmark** runs as one more child: the built-in "Buy and Hold" strategy on NIFTY 50 (`^NSEI`) for INR symbols or the S&P 500 (`^GSPC`) for USD symbols, with zero costs. The page shows a heatmap (total return, Sharpe, Sortino, Calmar, max drawdown, exposure or cost drag; coloured within each symbol's column), a benchmark row, and the strategies' equity curves for any one symbol against its benchmark. Curves on experiment pages are downsampled to at most ~500 points, keeping each bucket's minimum and maximum; a run's own page has the full curve.
+
+### Optimization and out-of-sample evaluation
 
 Picking the best parameters on the same data you then report on overstates performance. Vault therefore splits each optimization by time:
 
 1. The date range is split chronologically. The first 70% is **in-sample** and the last 30% is **out-of-sample** (`OOS_FRACTION`).
-2. Every stop-loss × take-profit combination runs on the in-sample period only.
+2. Every combination runs on the in-sample period only. A combination is stop-loss × take-profit, and for builder strategies also values of the strategy's own parameters. Parameters are grouped by indicator instance (`ema(12).period` covers the EMA-12 in both the buy and the sell rule), so a search changes them together. Each combination is its own validated, frozen spec. A value out of range rejects the request; a combination that is only invalid together (MACD fast ≥ slow) is skipped and listed.
 3. When all in-sample runs are finished, the best one by Sharpe is queued **once** on the out-of-sample period. A unique constraint guarantees exactly one such run.
-4. Job status is derived from the child runs and never stored: `running`, `completed`, `partially_completed` (some children failed, or the out-of-sample run failed) or `failed` (no child completed).
 
 The UI labels in-sample results as optimised and shows the out-of-sample result separately, next to buy & hold. A high in-sample Sharpe is not evidence of an edge.
 
 ## Accounts and workspaces
 
-Everything a user creates is private. Another user's run, trades or optimization returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
+Everything a user creates is private. Another user's run, trades or experiment returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
 
-| Tier | How you get it | Active jobs | Backtests / 24 h | Optimizations / 24 h | Saved strategies |
+| Tier | How you get it | Active jobs | Backtests / 24 h | Experiments / 24 h | Saved strategies |
 |---|---|---|---|---|---|
 | guest | "Try it as a guest" (one click, no email) | 2 | 20 | 2 | 5 |
 | unverified | sign up, or save a guest workspace as an account | 3 | 30 | 3 | 20 |
 | verified | click the link in the verification email | 10 | 200 | 20 | 100 |
 
-An optimization counts as one active job while any of its runs is active. Built-in strategies don't count towards saved strategies. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
+An experiment (comparison or optimization) counts as one active job while any of its runs is active. Built-in strategies don't count towards saved strategies. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
 
 - **Guests** get a temporary workspace that is deleted after `GUEST_TTL_DAYS` (7) unless they save it as an account. Their data is kept when they do.
 - **Housekeeping:** the worker deletes expired guests and expired sessions once an hour, so no cron job is needed.
@@ -287,6 +300,10 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 - India costs hand-calculated, the engine charging the sell rate on sells, currency inference
 - builder API: create with custom code off, edit and delete rules, saved-strategy limit, catalog and preview, an end-to-end run that freezes the spec and is deterministic on re-run, an India-cost run and optimization; no test may reach the real data provider
 - frontend: form ↔ spec round trip, the builder page (indicator parameters, condition limit, numbers saved as numbers, server errors on the exact field, templates), money formatting
+- experiments: a comparison matrix with benchmarks end to end, **a comparison cell equal to the same standalone run**, validation and idempotency, partial failure; parameter grids with linked paths, skipped invalid combinations and rejected bad values; the old `/api/optimizations/` route
+- queue and worker: **priority lanes** (a hand-started run claimed before older batch children), **4 real worker threads on Postgres never claiming a run twice**, worker caches giving identical results and never serving bars after a re-download, time-based heartbeat (no writes for fast runs, still beating for slow ones)
+- curve downsampling keeping extremes and ends, the new metrics hand-checked, tunable-parameter grouping
+- frontend: comparison form (cell count and limits, request body), experiment page (heatmap values and colours, benchmark row, failures, metric switch; optimization columns and skipped combinations)
 
 ## Deploy (Vercel + Render)
 
@@ -372,6 +389,7 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - Builder specs have flat AND/OR groups (no nesting) and eight indicators. Smoothed indicators (EMA, RSI, ATR, MACD) depend slightly on how much history precedes the start date, as in any charting tool.
 - The India cost model covers percentage charges only (no DP charges or minimum brokerage), and its rates are fixed in code. Currency is inferred from the symbol for display only.
 - Rolling back migration `0016` rounds 9-decimal fee rates to 6 places and leaves builder strategies with no code.
-- Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built.
+- Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built (D-061).
+- Worker caches are per process: several workers each warm their own. An experiment's limit is 25 child runs until a load test (Phase 3.5) measures capacity.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
 - No load test has been run, so there are no capacity numbers.

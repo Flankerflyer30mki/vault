@@ -20,7 +20,7 @@ from rest_framework.test import APIClient
 from accounts import housekeeping
 from accounts.models import LEGACY_EMAIL, User
 from backtester import jobs
-from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, SymbolCoverage, Trade
+from backtester.models import BacktestRun, Bar, Strategy, SymbolCoverage, Trade
 from backtester.tests import make_bars
 
 FAST_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
@@ -309,8 +309,8 @@ class IsolationTests(TestCase):
     def test_dashboard_contains_only_own_data(self):
         jobs.work_one("w")
         d = self.cb.get("/api/dashboard/").json()
-        self.assertEqual((d["active_runs"], d["recent_runs"], d["optimizations"]), ([], [], []))
-        self.assertEqual(d["quota"]["usage"], {"active_jobs": 0, "runs_per_day": 0, "optimizations_per_day": 0,
+        self.assertEqual((d["active_runs"], d["recent_runs"], d["experiments"]), ([], [], []))
+        self.assertEqual(d["quota"]["usage"], {"active_jobs": 0, "runs_per_day": 0, "experiments_per_day": 0,
                                               "strategies": 0})
 
 
@@ -337,7 +337,7 @@ class QuotaTests(TestCase):
         user = User.objects.create_user("u@example.com")
         c = self.client_for(user)
         quotas = {**settings.VAULT["QUOTAS"], "unverified": {"active_jobs": 5, "runs_per_day": 2,
-                                                             "optimizations_per_day": 1}}
+                                                             "experiments_per_day": 1}}
         with self.settings(VAULT={**settings.VAULT, "QUOTAS": quotas}):
             for _ in range(2):
                 self.assertEqual(c.post("/api/runs/", run_body(self.builtin.id), format="json").status_code, 201)
@@ -356,7 +356,7 @@ class QuotaTests(TestCase):
                                                    take_profit_options=["0.2", "0.3"]), format="json")
         self.assertEqual(r.status_code, 201)
         usage = c.get("/api/dashboard/").json()["quota"]["usage"]
-        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "optimizations_per_day": 1, "strategies": 0})
+        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "experiments_per_day": 1, "strategies": 0})
 
     def test_verifying_raises_limits(self):
         user = User.objects.create_user("w@example.com")
@@ -393,7 +393,7 @@ class DashboardTests(TestCase):
         opt = c.post("/api/optimizations/", run_body(builtin.id, stop_loss_options=["0.05"],
                                                      take_profit_options=["0.2"]), format="json").json()
         d = c.get("/api/dashboard/").json()
-        self.assertEqual(set(d), {"quota", "active_runs", "recent_runs", "optimizations", "strategies",
+        self.assertEqual(set(d), {"quota", "active_runs", "recent_runs", "experiments", "strategies",
                                   "custom_code_enabled"})
         self.assertNotIn("leaderboard", d)  # deliberately absent (D-022)
         self.assertEqual([r["id"] for r in d["active_runs"]], [queued["id"]])
@@ -402,8 +402,8 @@ class DashboardTests(TestCase):
         self.assertEqual(recent["id"], done["id"])
         self.assertAlmostEqual(recent["total_return"], float(run.final_value / run.starting_cash - 1))
         self.assertEqual(recent["buy_and_hold_return"], run.buy_and_hold_return)
-        self.assertEqual(d["optimizations"][0]["id"], opt["id"])
-        self.assertEqual(d["optimizations"][0]["runs_total"], 1)
+        self.assertEqual(d["experiments"][0]["id"], opt["id"])
+        self.assertEqual(d["experiments"][0]["runs_total"], 1)
         self.assertTrue(any(s["is_builtin"] for s in d["strategies"]))
         self.assertEqual(d["quota"]["usage"]["active_jobs"], 2)  # the queued run + the optimization
 

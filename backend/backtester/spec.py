@@ -9,9 +9,11 @@ Signals: on each bar, SELL if the exit group is true, otherwise BUY if the entry
 long-only engine ignores a BUY while holding and a SELL while flat, so this needs no position state. When entry and
 exit are both true, exit wins and a flat strategy stays out (conflicting signals; same spirit as "stop wins").
 """
+import copy
 import hashlib
 import json
 import math
+import re
 
 from backtester.indicators import REGISTRY
 
@@ -167,12 +169,13 @@ def warmup_bars(spec):
 
 # ---------------------------------------------------------------- interpretation
 
-def signals(spec, bars):
+def signals(spec, bars, cache=None):
     """bars: chronological dicts with open/high/low/close/volume. Returns 'BUY'/'SELL'/'HOLD' per bar.
-    Each distinct (indicator, params) is computed once over the whole series."""
+    Each distinct (indicator, params) is computed once over the whole series. `cache` (optional, with get/put) shares
+    those series across runs on the same bars; the caller scopes it to the data set (see cache.IndicatorCache)."""
     cols = {f: [b[f] for b in bars] for f in PRICE_FIELDS}
     floats = {f: [float(x) for x in v] for f, v in cols.items()}
-    cache = {}
+    local = {}
 
     def series(o):
         if "const" in o:
@@ -180,9 +183,14 @@ def signals(spec, bars):
         if "price" in o:
             return floats[o["price"]]
         key = (o["ind"], tuple(sorted(o["params"].items())))
-        if key not in cache:
-            cache[key] = REGISTRY[o["ind"]]["fn"](cols, o["params"])
-        return cache[key][o["output"]]
+        if key not in local:
+            computed = cache.get(key) if cache is not None else None
+            if computed is None:
+                computed = REGISTRY[o["ind"]]["fn"](cols, o["params"])
+                if cache is not None:
+                    cache.put(key, computed)
+            local[key] = computed
+        return local[key][o["output"]]
 
     def truth(c):
         a, b = series(c["left"]), series(c["right"])
@@ -214,10 +222,59 @@ def signals(spec, bars):
     return ["SELL" if x else "BUY" if e else "HOLD" for e, x in zip(entry, exit_)]
 
 
-def compile_decide(spec, bars):
+def compile_decide(spec, bars, cache=None):
     """A decide(bar, indicators) function for engine.simulate, backed by precomputed signals."""
-    by_ts = {b["ts"]: d for b, d in zip(bars, signals(spec, bars))}
+    by_ts = {b["ts"]: d for b, d in zip(bars, signals(spec, bars, cache))}
     return lambda bar, _indicators: by_ts[bar["ts"]]
+
+
+# ---------------------------------------------------------------- parameter search (Phase 3)
+
+_PATH = re.compile(r"^(entry|exit)\.(all|any)\[(\d+)\]\.(left|right)\.params\.([a-z_]+)$")
+
+
+def _label(o, name):
+    meta = REGISTRY[o["ind"]]
+    args = ", ".join(_num(o["params"][p[0]]) for p in meta["params"])
+    return f"{o['ind']}({args}).{name}"
+
+
+def tunable_params(spec):
+    """The numeric parameters a search can vary, grouped by indicator instance: EMA(12) used in both the entry and the
+    exit rule is one group with two paths, so a search changes them together (entry on EMA 10 with exit on EMA 12 would
+    be a different, accidental strategy). Returns [{label, indicator, name, type, min, max, value, paths}]."""
+    groups = {}
+    for side in ("entry", "exit"):
+        mode, conds = next(iter(spec[side].items()))
+        for i, c in enumerate(conds):
+            for lr in ("left", "right"):
+                o = c[lr]
+                if "ind" not in o:
+                    continue
+                for name, ptype, lo, hi, _default in REGISTRY[o["ind"]]["params"]:
+                    key = (o["ind"], tuple(sorted(o["params"].items())), name)
+                    g = groups.setdefault(key, {
+                        "label": _label(o, name), "indicator": o["ind"], "name": name, "type": ptype.__name__,
+                        "min": lo, "max": hi, "value": o["params"][name], "paths": []})
+                    g["paths"].append(f"{side}.{mode}[{i}].{lr}.params.{name}")
+    return list(groups.values())
+
+
+def with_params(spec, assignments):
+    """A copy of `spec` with each (paths, value) applied. Raises KeyError for a path that isn't a parameter of an
+    indicator in this spec. The result is NOT validated; call validate() on it."""
+    out = copy.deepcopy(spec)
+    for paths, value in assignments:
+        for path in paths:
+            m = _PATH.match(path)
+            if not m:
+                raise KeyError(path)
+            side, mode, i, lr, name = m.group(1), m.group(2), int(m.group(3)), m.group(4), m.group(5)
+            conds = out[side].get(mode)
+            if conds is None or i >= len(conds) or "ind" not in conds[i][lr] or name not in conds[i][lr]["params"]:
+                raise KeyError(path)
+            conds[i][lr]["params"][name] = value
+    return out
 
 
 # ---------------------------------------------------------------- read-only rendering

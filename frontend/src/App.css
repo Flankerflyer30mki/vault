@@ -798,3 +798,95 @@ a.button.small {
     align-items: stretch;
   }
 }
+
+/* ---- experiments: comparisons and optimizations (Phase 3) ---- */
+.run-form.wide-form {
+  max-width: 640px;
+}
+
+.pick-list {
+  border: 1px solid #333;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pick-list legend {
+  color: #eee;
+  padding: 0 6px;
+}
+
+.run-form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #ddd;
+}
+
+.param-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.param-row input[type="text"] {
+  flex: 1;
+  min-width: 160px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-form .chip-row button {
+  margin-top: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.heatmap th[scope="row"] {
+  text-align: left;
+  color: #ddd;
+  font-weight: normal;
+}
+
+.heat-cell a {
+  display: block;
+  color: #eee;
+  text-decoration: none;
+}
+
+/* Five steps from worst (red) to best (green) within each column; no level = no colour. */
+.heat-cell[data-level="0"] { background: rgba(255, 107, 107, 0.35); }
+.heat-cell[data-level="1"] { background: rgba(255, 146, 43, 0.25); }
+.heat-cell[data-level="2"] { background: rgba(255, 212, 59, 0.18); }
+.heat-cell[data-level="3"] { background: rgba(148, 216, 45, 0.25); }
+.heat-cell[data-level="4"] { background: rgba(81, 207, 102, 0.35); }
+
+.bench-row th,
+.bench-row td {
+  color: #aaa;
+  font-style: italic;
+  border-top: 1px dashed #444;
+}
+
+.inline-label {
+  color: #ccc;
+  font-size: 14px;
+}
+
+.inline-label select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 4px 8px;
+}
