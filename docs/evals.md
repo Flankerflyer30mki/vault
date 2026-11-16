@@ -18,6 +18,7 @@ python manage.py test -v 2 --durations 0 --timing
 | 0 | 2026-11-16 | 38 | 38 | 0 | 4.136 s | 3.838 s | 1.316 s | 5.987 s |
 | 1 | 2026-11-16 | 70 | 70 | 0 | 7.531 s | 5.864 s | 1.477 s | 9.935 s |
 | 2 | 2026-11-16 | 104 backend + 13 frontend | 117 | 0 | 11.900 s | 11.901 s | 1.886 s | 14.959 s |
+| 3 | 2026-11-16 | 126 backend + 21 frontend | 147 | 0 | 18.597 s | 14.025 s | 2.130 s | 22.742 s |
 
 ## Phase 0 · CI checks (run locally, matching `.github/workflows/ci.yml`)
 | Check | Result |
@@ -339,3 +340,130 @@ all runs; **rollback rounds a 9-decimal fee to 6 places (documented)**; re-upgra
   builder tests add 2.1 s, mostly the API tests that run real backtests through the worker.
 - **The strongest tests are properties, not examples:** the metamorphic look-ahead test and the differential parity test
   would catch whole classes of bugs, not just the cases someone thought of.
+
+---
+
+# Phase 3 · Comparison and optimization
+
+**Environment:** same as Phase 2. Single runs; the Postgres suite time varied between 14.3 s and 18.6 s across two runs on the
+same machine, so treat suite times as ±25%.
+
+## Phase 3 · Checks
+| Check | Result |
+|---|---|
+| Backend suite, Postgres 16 | ✅ 126/126, including the 4-thread concurrency test (18.597 s; total 22.742 s) |
+| Backend suite, SQLite | ✅ 125 passed + 1 skipped (the concurrency test needs Postgres row locks) (14.025 s) |
+| Frontend tests | ✅ 21/21 in 5 files (8.92 s wall) |
+| `makemigrations --check` | ✅ No changes detected (the hand-written `0018` matches the models exactly) |
+| `DEBUG=0` without `SECRET_KEY` | ✅ refuses to start |
+| `pip-audit` | ✅ No known vulnerabilities |
+| `npm run lint`, `npm run build` | ✅ |
+| Docker builds | Run by CI on the PR |
+
+## Phase 3 · Test count
+| Suite | Phase 2 | Phase 3 | Change |
+|---|---|---|---|
+| `backtester.tests` | 39 | 39 | renames only, plus one assertion: the experiment page returns a downsampled `curve` (D-062) |
+| `accounts.tests` | 31 | 31 | quota key renamed (`experiments_per_day`), dashboard key `experiments` |
+| `backtester.test_builder` | 34 | 34 | renames; Buy and Hold added to the expected built-in list |
+| `backtester.test_experiments` (new) | — | 22 | +22 |
+| **Backend total** | **104** | **126** | **+22** |
+| Frontend | 13 | 21 | +8 (`experiments.test.js`, `ExperimentPages.test.jsx`) |
+
+Every Phase 0–2 test still runs against `/api/optimizations/`, which is now an alias of the experiments API, so the old
+behaviour is checked through the new code.
+
+## Phase 3 · Per-test timings, `backtester.test_experiments` (Postgres)
+| Class | Test | Time |
+|---|---|---|
+| ConcurrentWorkerTests | `test_every_run_claimed_exactly_once` (4 threads, 40 runs) | 0.986 s |
+| ParamGridTests | `test_grid_over_linked_spec_params_end_to_end` (8 + 1 runs) | 0.633 s |
+| HeartbeatTests | `test_slow_run_still_heartbeats` (one UPDATE per bar on purpose) | 0.633 s |
+| WorkerCacheTests | `test_children_share_bars_and_indicators_and_results_are_unchanged` (2 × 5 runs) | 0.571 s |
+| ComparisonTests | `test_partial_failure_and_quota_counts_one_job` | 0.504 s |
+| ComparisonTests | `test_matrix_with_benchmarks_end_to_end` (6 runs) | 0.494 s |
+| ParamGridTests | `test_invalid_combinations_are_skipped_and_reported` | 0.379 s |
+| ComparisonTests | `test_validation` | 0.370 s |
+| ComparisonTests | `test_a_cell_equals_the_same_standalone_run` | 0.363 s |
+| ParamGridTests | `test_rejections` | 0.348 s |
+| WorkerCacheTests | `test_a_redownload_invalidates_cached_bars` | 0.347 s |
+| HeartbeatTests | `test_fast_run_writes_no_progress_rows` | 0.339 s |
+| ParamGridTests | `test_old_endpoint_still_works` | 0.316 s |
+| ComparisonTests | `test_idempotent_and_no_benchmark_for_unknown_currency` | 0.253 s |
+| PriorityLaneTests | `test_interactive_run_is_claimed_before_older_batch_children` | 0.029 s |
+| Downsample, LRU, metrics, tunable params | 7 pure tests | ≤ 3 ms each |
+| **Total** | **22 tests** | **≈ 6.6 s** |
+
+The legacy-migration test (`accounts`) grew from 1.19 s to 2.11 s: it now rolls back and re-applies four more migrations.
+
+## Phase 3 · Correctness evidence
+| Property | How it is shown | Result |
+|---|---|---|
+| A comparison cell is an ordinary backtest | Same strategy, symbol and settings as a cell and as a standalone run | ✅ identical final value, trades and equity curve |
+| No run lost or claimed twice | 4 worker threads, each with its own Postgres connection, drain 40 runs (mixed priorities) | ✅ 40/40 completed, every `attempts = 1`, work spread over several workers |
+| Priority lanes | 3 batch children queued, then a hand-started run | ✅ claimed first; FIFO within a lane |
+| The cache changes speed, not results | Same 5 runs with warm and cold caches | ✅ identical final values and curves |
+| The cache can't serve stale bars | Bump the symbol's coverage `fetched_at` (as a re-download does) | ✅ next load misses |
+| Linked parameters move together | Grid over `ema(12).period` × `ema(26).period` | ✅ entry and exit EMAs equal in every child; 8 distinct frozen specs, each hash matches its spec |
+| Invalid combinations skipped, not failed | MACD fast ∈ {12, 30} × slow ∈ {26, 40} | ✅ 1 skipped (30 ≥ 26) with the reason, 3 runs created |
+| Bad requests rejected before any work | Out-of-range value, fraction for an integer, half a linked group, parameters on a code strategy, 30 > 25 combinations, all invalid | ✅ 400 each, 0 experiments created |
+| Downsampling keeps the shape | 2,520-point wave with one spike up and one down | ✅ ≤ 500 points, both extremes and both ends kept, time order kept |
+| New metrics | Hand-checked Sortino, Calmar, exposure, round trips on a 5-bar ledger; undefined → `null` | ✅ |
+| Heartbeat | Fast run: 0 progress writes; with the interval forced to 0: > 300 writes | ✅ |
+
+## Phase 3 · Worker cache and heartbeat (one worker, Postgres, ≈ 8 years of daily bars, 25 children)
+| Grid | Heartbeat | Cache | Wall time | Median per child | Bars hits/misses | Indicator hits/misses |
+|---|---|---|---|---|---|---|
+| EMA lengths 5 × 5 | every 50 bars | off | 5,725 ms | 174 ms | 0/26 | 0/52 |
+| EMA lengths 5 × 5 | every 50 bars | on | 5,200 ms | 153 ms | 20/6 | 20/32 |
+| stop × target 5 × 5 | every 50 bars | off | 5,747 ms | 176 ms | 0/26 | 0/52 |
+| stop × target 5 × 5 | every 50 bars | on | 5,017 ms | 148 ms | 24/2 | 48/4 |
+| EMA lengths 5 × 5 | **≤ 1/s** | off | 2,727 ms | 56 ms | 0/26 | 0/52 |
+| EMA lengths 5 × 5 | **≤ 1/s** | **on** | **2,426 ms** | **37 ms** | 20/6 | 20/32 |
+| stop × target 5 × 5 | **≤ 1/s** | off | 3,415 ms | 61 ms | 0/26 | 0/52 |
+| stop × target 5 × 5 | **≤ 1/s** | **on** | **2,378 ms** | **39 ms** | 24/2 | 48/4 |
+
+Results were identical with and without the cache in every case. **Profile of one child before the heartbeat change** (219 ms,
+cache warm): 153 ms (70%) in 41 progress `UPDATE`s, ≈ 17 ms simulation, 12 ms signals, ≈ 13 ms saving trades and results.
+The EMA-length grid hits less than the stop × target grid because different EMA lengths need different warm-ups, and the
+bar cache key includes the warm-up.
+
+## Phase 3 · Priority lanes (one worker, 25-child batch already 3 children in)
+| Queue order | Batch children run before the hand-started run | Wait from click to start |
+|---|---|---|
+| FIFO (old) | 22 | 1,255 ms (3,709 ms before the heartbeat fix) |
+| **Priority lanes** | **0** | **25 ms** |
+
+## Phase 3 · Migration rehearsal (Postgres 16, Phase 2 schema with 500 runs and 20 optimizations)
+| Step | Time |
+|---|---|
+| Build Phase 2 schema (to `0017`) | 1,177 ms |
+| **Upgrade to `0019`** | **221 ms** |
+| **Roll back to `0017`** | **313 ms** |
+| Upgrade again | 215 ms |
+
+13/13 checks: every optimization became an experiment of kind `optimization` with the same strategy, symbol, dates, split and
+options; empty `config`; all 500 runs kept and every one of the 60 linked runs points at the same parent; existing runs get
+priority 0 and no new metrics; 9-decimal fees untouched; Buy and Hold seeded once; the unique constraint still allows only one
+out-of-sample run per experiment; **`EXPLAIN` shows the claim query using `idx_run_claim`**; rollback restores optimizations
+and links and removes Buy and Hold; re-upgrade gives the same experiments.
+
+## Phase 3 · Other measurements
+| Measurement | Value |
+|---|---|
+| Frontend JS bundle, Phase 2 → Phase 3 | 690,550 → 702,957 bytes raw (+12,407, +1.8%); gzip −9: 207,414 → 211,432 |
+| Frontend CSS, Phase 2 → Phase 3 | 10,485 → 11,591 bytes raw; gzip −9: 2,932 → 3,193 |
+
+## Phase 3 · Bugs and surprises found while testing
+| What | Found by | Outcome |
+|---|---|---|
+| **The heartbeat, not data loading, dominated a child's time** (70%) | Cache benchmark gave only 12–13%, so I profiled instead of guessing | Time-based heartbeat (D-063): 4.5× faster per child |
+| An invalid MACD pair was reported 4 times (once per linked path) | `test_invalid_combinations_are_skipped_and_reported` | Reasons de-duplicated |
+| `makemigrations` can't safely detect a rename non-interactively | Design check before writing `0018` | Hand-written migration, verified with `makemigrations --check` and the rehearsal |
+| The legacy-migration test's historical model names (`OptimizationJob` at `0015`) | Rename review | Left unchanged on purpose: it reads the schema as it was at `0015` |
+
+## Phase 3 · Observations
+- **Profiling beat intuition.** The planned optimisation (the cache) helped; the unplanned one (heartbeat) helped three times
+  more. Together: 25 children in 2.4 s instead of 5.7 s on one worker.
+- **One fan-out/fan-in model** now serves comparisons and optimizations, and Phase 5's agent will submit experiments the same way.
+- **Concurrency is proven, not assumed:** four real workers on Postgres never claimed a run twice.

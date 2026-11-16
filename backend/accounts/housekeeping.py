@@ -15,7 +15,7 @@ def delete_expired_guests():
     cutoff = timezone.now() - timedelta(days=settings.VAULT["GUEST_TTL_DAYS"])
     n = 0
     for user in User.objects.filter(is_guest=True, date_joined__lt=cutoff).iterator():
-        user.delete()  # cascades to the guest's strategies, runs, trades and optimizations
+        user.delete()  # cascades to the guest's strategies, runs, trades and experiments
         n += 1
     return n
 

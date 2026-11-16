@@ -61,6 +61,7 @@ class Result:
     equity_curve: list = field(default_factory=list)  # [(ts, Decimal equity)]
     cash: Decimal = Decimal("0")
     quantity: Decimal = Decimal("0")
+    bars_in_market: int = 0  # bars that closed with a position open (for exposure)
 
 
 def simulate(bars, decide, p, warmup=0, on_progress=None):
@@ -119,6 +120,7 @@ def simulate(bars, decide, p, warmup=0, on_progress=None):
 
         equity = r.cash + r.quantity * bar["close"]
         r.equity_curve.append((bar["ts"], equity))
+        r.bars_in_market += r.quantity > 0
 
         indicators = {f"sma_{w}": _sma(closes, w) for w in SMA_WINDOWS}
         decision = decide(bar, indicators)
@@ -144,7 +146,8 @@ def metrics(result, p, bars):
     out = {
         "final_value": result.equity_curve[-1][1].quantize(CENT) if curve else None,
         "cagr": None, "sharpe_ratio": None, "max_drawdown": None, "win_rate": None,
-        "buy_and_hold_return": None,
+        "buy_and_hold_return": None, "sortino_ratio": None, "calmar_ratio": None, "exposure": None,
+        "trade_count": len(result.fills) // 2,
         "total_commission": sum((f.commission for f in result.fills), Decimal("0")).quantize(CENT),
         "total_slippage": sum((f.slippage_cost for f in result.fills), Decimal("0")).quantize(CENT),
     }
@@ -169,6 +172,14 @@ def metrics(result, p, bars):
         mean = sum(rets) / len(rets)
         std = math.sqrt(sum((x - mean) ** 2 for x in rets) / (len(rets) - 1))
         out["sharpe_ratio"] = mean / std * math.sqrt(252) if std > 0 else None
+        # Sortino: like Sharpe, but only losing days count as risk (downside deviation, target 0).
+        downside = math.sqrt(sum(min(x, 0.0) ** 2 for x in rets) / len(rets))
+        out["sortino_ratio"] = mean / downside * math.sqrt(252) if downside > 0 else None
+
+    # Calmar: annual growth per unit of worst drawdown.
+    if out["cagr"] is not None and max_dd > 0:
+        out["calmar_ratio"] = out["cagr"] / max_dd
+    out["exposure"] = result.bars_in_market / len(curve)
 
     # Win rate: net P&L per round trip, after commission and slippage.
     wins = closed = 0

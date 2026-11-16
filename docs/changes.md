@@ -123,3 +123,47 @@ What changed in each phase, at a level useful for review and release notes. Deci
 - **Migrations:** rehearsed on Postgres with 500 runs: upgrade 156 ms, rollback 198 ms, re-upgrade 141 ms, 13/13 checks (see evals).
 - First builder run on a symbol may download a longer history (up to 600 bars of warm-up).
 - The India cost rates are in `costs.py`; confirm them against current exchange circulars before the release.
+
+## Phase 3 · Comparison and optimization · branch `phase-3-experiments` · 2026-11-16
+
+### Behavior changes
+| Area | Before | After | Decision |
+|---|---|---|---|
+| Batches | `OptimizationJob`: one strategy, stop × target grid | `Experiment` with `kind` = optimization or **comparison** | D-055 |
+| Comparison | Not possible | Strategies × symbols (≤ 25 cells) on one period and cost setup, plus an index benchmark per currency; heatmap, overlaid curves | D-056, D-065 |
+| Optimization | Stop-loss × take-profit only | Also the builder strategy's own parameters (linked paths move together); invalid combinations skipped and listed | D-057, D-064 |
+| Queue order | First in, first out | `(priority, id)`: runs started by hand before batch children | D-059 |
+| Worker | Every child reloaded bars and recomputed indicators | Per-worker LRU caches for bars and indicator series | D-058 |
+| Heartbeat | Every 50 bars | At most once per second | D-063 |
+| Metrics | Final value, CAGR, Sharpe, drawdown, win rate, buy & hold | Plus Sortino, Calmar, exposure, round trips, cost drag | D-060 |
+| Experiment pages | Full equity curve of every child | Curves downsampled to ≤ 500 points (extremes kept) | D-062 |
+| Built-ins | 3 code + 6 builder | Plus "Buy and Hold" (also the benchmark) | D-065 |
+| Quota | `optimizations_per_day` | `experiments_per_day` (comparisons and optimizations) | D-066 |
+
+### API
+- **New:** `GET/POST /api/experiments/`, `GET /api/experiments/<id>/`. POST with `kind: "comparison"` takes `strategies`, `symbols`, dates, cash, cost model, optional stop/target; with `kind: "optimization"` takes the old fields plus `param_grid: [{paths, values}]`.
+- **Kept:** `/api/optimizations/` and `/api/optimizations/<id>/` (optimizations only).
+- **Changed:** experiment detail returns each child's `curve` (downsampled) instead of `equity_curve`; runs gain `experiment`, `priority`, `grid_params`, `sortino_ratio`, `calmar_ratio`, `exposure`, `trade_count`, `cost_drag` (and lose `optimization`). Strategies and preview gain `tunable_params`. Catalog gains `limits` and `benchmarks`. Dashboard `optimizations` → `experiments` (with `kind` and `title`).
+
+### UI
+New `/compare` (strategy checkboxes, symbols with suggestion chips, live cell count) and `/experiments/<id>` (comparison heatmap coloured per column with benchmark row and curves per symbol; optimization table with searched-parameter columns, new metrics and skipped combinations). The optimization form lists a builder strategy's tunable parameters. Nav gains "Compare"; the run page shows the new metrics. `/optimize/<id>` still opens the experiment page.
+
+### Database
+| Migration | What | Reversible |
+|---|---|---|
+| `backtester.0018_experiments` (hand-written) | rename `OptimizationJob` → `Experiment` and `optimization` → `experiment`; `kind`, `config`; nullable strategy, blank symbol; run `priority`, `grid_params`, 4 metric columns; `sample` up to 10 chars (`bench`); index `idx_run_claim (status, priority, id)` replaces `idx_run_status_id`; unique OOS constraint recreated on the new field | yes (rehearsed) |
+| `backtester.0019_buy_and_hold` | seeds the built-in "Buy and Hold" | yes (removes it if nothing ran on it) |
+
+### Files
+- **New** `backend/backtester/cache.py` (LRU, indicator-cache adapter, `downsample`), `test_experiments.py` (22 tests), migrations `0018`, `0019`
+- `backend/backtester/`: `models.py`, `engine.py` (exposure counter, Sortino, Calmar, round trips), `spec.py` (`signals(cache=…)`, `tunable_params`, `with_params`), `jobs.py` (priority claim, cached loading, time-based heartbeat, `experiment_status`, OOS copies grid params), `serializers.py` (experiment read/create serializers, downsampled run curves, `cost_drag`, `tunable_params`), `views.py` (experiments, benchmarks, generic idempotent create), `urls.py`, `tests.py`, `test_builder.py` (renames; the detail page's `curve`; Buy and Hold in the template list)
+- `backend/accounts/`: `quotas.py` (`experiments_per_day`), `tests.py` (renamed keys), `housekeeping.py`, `views.py` (comments)
+- `backend/vault_core/settings.py`: quota rename, `MAX_GRID_PARAMS`, `MAX_COMPARE_STRATEGIES`, `MAX_COMPARE_SYMBOLS`, `BENCHMARKS`
+- **New** `frontend/src/experiments.js` (+ tests), `pages/ComparisonTrigger.jsx`, `pages/ExperimentDetail.jsx` (replaces `pages/Comparison.jsx`), `pages/ExperimentPages.test.jsx`; fixtures extended
+- `frontend/src/`: `pages/OptimizationTrigger.jsx` (parameter search), `Dashboard.jsx`, `RunDetail.jsx`, `Account.jsx`, `App.jsx`, `App.css`
+- `README.md`, `CLAUDE.md`, `docs/*`
+
+### Operational notes for release
+- **Renamed env var:** `QUOTA_<TIER>_OPTIMIZATIONS_PER_DAY` → `QUOTA_<TIER>_EXPERIMENTS_PER_DAY` (only if overridden). New optional: `MAX_GRID_PARAMS`, `MAX_COMPARE_STRATEGIES`, `MAX_COMPARE_SYMBOLS`.
+- **Migrations:** rehearsed on Postgres with 500 runs and 20 optimizations: upgrade 221 ms, rollback 313 ms, re-upgrade 215 ms, 13/13 checks.
+- Comparisons fetch `^NSEI` / `^GSPC` on first use (normal data path).
