@@ -8,7 +8,7 @@ Execution model (documented in README "Execution model"):
   a gap through the level fills at the open; an intrabar touch fills at the level;
   if one bar touches both, the stop is assumed to fill first (conservative).
 - Long-only, one position at a time, fractional shares rounded down to QTY_STEP.
-- Commission and slippage are charged exactly once per fill; position sizing includes
+- Commission (buy and sell rates may differ) and slippage are charged exactly once per fill; position sizing includes
   the commission so cash never goes negative.
 - Equity at every bar = cash + quantity * close. The open position is NOT force-closed
   at the end; final value is the last equity point (marked to market).
@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, Decimal
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.1.0"  # 2.1: separate sell-side fee rate; builder strategies (spec.py)
 QTY_STEP = Decimal("0.000001")
 CENT = Decimal("0.0001")
 SMA_WINDOWS = (10, 50)
@@ -36,6 +36,11 @@ class Params:
     slippage_pct: Decimal = Decimal("0.0005")
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    sell_commission_pct: Decimal | None = None  # None = same as commission_pct (India: stamp duty is buy-only)
+
+    @property
+    def sell_fee_pct(self):
+        return self.commission_pct if self.sell_commission_pct is None else self.sell_commission_pct
 
 
 @dataclass
@@ -85,7 +90,7 @@ def simulate(bars, decide, p, warmup=0, on_progress=None):
             price = raw_price * (one - p.slippage_pct)
             qty = r.quantity
             gross = qty * price
-            fee = gross * p.commission_pct
+            fee = gross * p.sell_fee_pct
             r.cash += gross - fee
             r.quantity = Decimal("0")
             entry = None

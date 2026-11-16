@@ -310,7 +310,8 @@ class IsolationTests(TestCase):
         jobs.work_one("w")
         d = self.cb.get("/api/dashboard/").json()
         self.assertEqual((d["active_runs"], d["recent_runs"], d["optimizations"]), ([], [], []))
-        self.assertEqual(d["quota"]["usage"], {"active_jobs": 0, "runs_per_day": 0, "optimizations_per_day": 0})
+        self.assertEqual(d["quota"]["usage"], {"active_jobs": 0, "runs_per_day": 0, "optimizations_per_day": 0,
+                                              "strategies": 0})
 
 
 @override_settings(PASSWORD_HASHERS=FAST_HASHERS)
@@ -355,7 +356,7 @@ class QuotaTests(TestCase):
                                                    take_profit_options=["0.2", "0.3"]), format="json")
         self.assertEqual(r.status_code, 201)
         usage = c.get("/api/dashboard/").json()["quota"]["usage"]
-        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "optimizations_per_day": 1})
+        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "optimizations_per_day": 1, "strategies": 0})
 
     def test_verifying_raises_limits(self):
         user = User.objects.create_user("w@example.com")
@@ -445,7 +446,13 @@ class LegacyMigrationTests(TransactionTestCase):
     before = [("backtester", "0012_symbolcoverage")]
     after = [("backtester", "0015_owner_required")]
 
+    def _to_latest(self):
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
     def test_existing_rows_move_to_legacy_user(self):
+        self.addCleanup(self._to_latest)  # leave the schema at the newest migration for the next test
         executor = MigrationExecutor(connection)
         executor.migrate(self.before)
         old = executor.loader.project_state(self.before).apps

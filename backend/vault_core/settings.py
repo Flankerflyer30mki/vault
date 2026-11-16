@@ -163,9 +163,9 @@ VAULT = {
     # Per-user quotas by tier; override any value with QUOTA_<TIER>_<LIMIT>, e.g. QUOTA_VERIFIED_RUNS_PER_DAY.
     "QUOTAS": {tier: {k: env_int(f"QUOTA_{tier.upper()}_{k.upper()}", v) for k, v in defaults.items()}
                for tier, defaults in {
-                   "guest": {"active_jobs": 2, "runs_per_day": 20, "optimizations_per_day": 2},
-                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "optimizations_per_day": 3},
-                   "verified": {"active_jobs": 10, "runs_per_day": 200, "optimizations_per_day": 20},
+                   "guest": {"active_jobs": 2, "runs_per_day": 20, "optimizations_per_day": 2, "strategies": 5},
+                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "optimizations_per_day": 3, "strategies": 20},
+                   "verified": {"active_jobs": 10, "runs_per_day": 200, "optimizations_per_day": 20, "strategies": 100},
                }.items()},
 }
 

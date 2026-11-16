@@ -16,4 +16,8 @@ export default defineConfig({
       '/health': { target },
     },
   },
+  // `npm test`: component tests run in a simulated browser (jsdom). Dev and production builds ignore this.
+  test: {
+    environment: 'jsdom',
+  },
 })

@@ -83,7 +83,14 @@ export function usePoll(url, ms = 2000, maxErrors = 5) {
 }
 
 export const pct = (v, dp = 2) => (v === null || v === undefined ? "N/A" : `${(v * 100).toFixed(dp)}%`);
-export const money = (v) => (v === null || v === undefined ? "N/A" : `$${parseFloat(v).toFixed(2)}`);
+// Money in the symbol's currency (the API sends "INR", "USD", or null when the exchange is unknown).
+// INR uses Indian digit grouping: ₹1,00,000.00.
+export const money = (v, currency = "USD") => {
+  if (v === null || v === undefined || v === "") return "N/A";
+  const n = parseFloat(v);
+  if (!currency) return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", { style: "currency", currency }).format(n);
+};
 export const num = (v, dp = 2) => (v === null || v === undefined ? "N/A" : Number(v).toFixed(dp));
 export const list = (data) => (Array.isArray(data) ? data : data?.results || []);
 // Legacy runs stored a bare list of floats; v2 stores [date, value].
