@@ -4,6 +4,7 @@ from itertools import product
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch
 from rest_framework import generics, status
 from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
@@ -49,6 +50,8 @@ class IdempotentCreate:
             with transaction.atomic():
                 obj = self.perform_create(serializer, key)
         except IntegrityError:
+            if key is None:
+                raise
             obj = model.objects.get(idempotency_key=key)  # concurrent duplicate won the race
         return Response(self.get_serializer(obj).data, status=status.HTTP_201_CREATED)
 
@@ -66,7 +69,9 @@ class StrategyListCreateView(Throttled, generics.ListCreateAPIView):
 
 class BacktestRunListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
     write_scope = "jobs"
-    queryset = BacktestRun.objects.select_related("strategy").order_by("-created_at")
+    # The list serializer shows neither the curve nor the code; don't load them.
+    queryset = (BacktestRun.objects.select_related("strategy").defer("equity_curve", "strategy_code")
+                .order_by("-created_at"))
     serializer_class = BacktestRunSerializer
 
     def perform_create(self, serializer, key):
@@ -91,7 +96,10 @@ class TradeListView(Throttled, generics.ListAPIView):
 
 class OptimizationJobListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
     write_scope = "jobs"
-    queryset = OptimizationJob.objects.select_related("strategy").prefetch_related("runs").order_by("-created_at")
+    # Status is derived from the child runs; load only what optimization_status reads, never the curves.
+    queryset = OptimizationJob.objects.select_related("strategy").prefetch_related(
+        Prefetch("runs", queryset=BacktestRun.objects.only("id", "optimization_id", "status", "sample"))
+    ).order_by("-created_at")
     serializer_class = OptimizationJobSerializer
 
     def perform_create(self, serializer, key):

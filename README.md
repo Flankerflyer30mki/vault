@@ -52,7 +52,7 @@ The rules below are implemented in `backend/backtester/engine.py`, and the tests
 |---|---|
 | Signal time | The strategy sees bar *t*, including its close. SMA-10 and SMA-50 are computed from closes up to and including bar *t*. |
 | Fill time | A decision made on bar *t* fills at the **open of bar *t+1***. A decision on the last bar never fills. |
-| Stops / targets | These are checked against each bar's high and low while a position is open. If the bar opens past the level (a gap), the fill is at the open. If the level is touched during the bar, the fill is at the level. **If both levels are touched in one bar, Vault assumes the stop filled** (the conservative choice). |
+| Stops / targets | These are checked against each bar's high and low while a position is open. If the bar opens past the level (a gap), the fill is at the open. If the level is touched during the bar, the fill is at the level. **If both levels are touched in one bar, Vault assumes the stop filled** (the conservative choice). The API rejects a stop-loss that is not larger than the slippage: entry fills at `open × (1 + slippage)`, so a tighter stop would sit above the open and stop out every entry on its first bar. |
 | Position | Long only, one position at a time. Fractional shares are rounded down to 1e-6. |
 | Sizing | `qty = cash × max_position_pct / (fill_price × (1 + commission))`. The commission is part of the budget, so cash never goes negative. |
 | Costs | Slippage moves the fill price against you. Commission is charged on each fill's notional. Each is charged exactly once. |
@@ -76,8 +76,9 @@ The rules below are implemented in `backend/backtester/engine.py`, and the tests
 Data comes from Yahoo Finance via `yfinance`. Prices are adjusted (`auto_adjust=True`) daily bars, and each bar is stored at midnight UTC of its trading date.
 
 - Symbols are normalised to upper case before any read or write.
-- **Coverage is checked properly.** A range counts as covered only if the stored bars reach both ends (within 5 days) and contain no gap longer than 5 days. Otherwise Vault fetches the whole range from Yahoo. Yahoo's `end` parameter is exclusive, so Vault requests `end + 1 day`.
-- The fetch is idempotent. A `UNIQUE (symbol, ts)` constraint means concurrent fetches cannot create duplicate bars.
+- **Coverage is tracked per symbol.** `SymbolCoverage` records the date span already requested from Yahoo. A request inside that span is served from stored bars, whatever Yahoo had (late listings and market closures stay as labelled gaps instead of causing a download on every run). The fetch day itself is never counted as covered, because that day's bar may not exist yet. Stored bars without a coverage record (for example from before this was added) count as not covered. Yahoo's `end` parameter is exclusive, so Vault requests `end + 1 day`.
+- **One price scale per symbol.** Yahoo restates adjusted history after every split and dividend. So a fetch downloads the symbol's whole known span (stored, covered and requested) and replaces its bars in one transaction, instead of adding new rows next to old ones on a different scale. A failed or empty fetch changes nothing and records no coverage.
+- Concurrent fetches are safe: `UNIQUE (symbol, ts)` plus an upsert means no duplicate bars.
 - Rows with non-finite or non-positive prices are rejected, as are rows where `low > min(open, close)` or `high < max(open, close)`.
 - Partial data is allowed but **labelled**: the run's `data_manifest.warnings` lists late starts, early ends, gaps, rejected rows and missing warm-up. If no bars are found, the run **fails** with category `data`.
 - Each run records `data_manifest`: provider, adjustment, first and last bar, bar count, and a SHA-256 of the bars used.
@@ -106,6 +107,7 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | `RUN_TIMEOUT_S` / `RUN_CPU_S` / `RUN_MEMORY_MB` | 60 / 30 / 256 | per strategy process |
 | request body | 64 KB | per request |
 | `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per IP, per API process** (in-memory cache) |
+| `NUM_PROXIES` | 1 on Render, else 0 | proxies in front of the API. Throttling identifies the client from the address the last trusted proxy appended, so a client cannot dodge limits by sending its own `X-Forwarded-For` |
 | `Idempotency-Key` header | optional | repeating a `POST /runs/` or `/optimizations/` with the same key returns the original job |
 
 ## Optimization and out-of-sample evaluation
@@ -178,9 +180,11 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 - next-bar fills (regression test for same-bar lookahead), last-bar signals and warm-up being hidden from the strategy
 - a stop and a target touched in the same bar, a gap through a stop, and an intrabar target
 - sandbox cases: infinite loop, invalid output, exception, blocked imports and dunders, no `open`, huge output
-- data cases: one stored bar not counting as coverage, gap labelling, invalid OHLC rejected, no data
+- data cases: one stored bar not counting as coverage, gap labelling, invalid OHLC rejected, no data, a provider restatement replacing old bars (one price scale), a covered span not downloaded again, a failed fetch keeping stored bars, the fetch day not counted as covered
 - API cases: custom code disabled, end-to-end run, a retry that does not duplicate trades, idempotency key, queue full (503), grid limit
-- stale-job requeue and then fail
+- stale-job requeue and then fail, and an optimization still finishing when its last in-sample run fails that way
+- the worker loop recycling database connections and surviving recovery errors
+- a spoofed `X-Forwarded-For` not bypassing throttling, the optimization list not loading equity curves, a stop tighter than slippage rejected
 - partial optimization failure with exactly one out-of-sample run
 - health endpoints
 
@@ -243,9 +247,9 @@ After deploy, watch Logs and Events for the same signature over several hours be
 
 **Other procedures:**
 
-- *A job looks stuck:* check `status`, `heartbeat_at`, `attempts` and `worker_id` on the run. Recovery runs every 30 s in each worker. If no worker is running, jobs stay `queued`.
+- *A job looks stuck:* check `status`, `heartbeat_at`, `attempts` and `worker_id` on the run. Recovery runs every 30 s in each worker. It also queues the out-of-sample run for any optimization whose in-sample runs have all finished. If no worker is running, jobs stay `queued`.
 - *Queue full (503):* there are more than `MAX_ACTIVE_RUNS` active runs. Add a worker or raise the limit.
-- *Database down:* `/health/ready` returns 503. API calls return a safe 500 or 503 without a stack trace. Workers log the error and keep polling.
+- *Database down:* `/health/ready` returns 503. API calls return a safe 500 or 503 without a stack trace. Workers log the error and keep polling. They drop broken connections at the top of each loop, so they reconnect once the database is back.
 - *Yahoo down:* runs over data that is already stored still work. Runs that need new data fail with category `data` and the message "No market data".
 
 ## Design decisions

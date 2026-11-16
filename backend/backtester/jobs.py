@@ -16,12 +16,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, close_old_connections, transaction
 from django.utils import timezone
 
 from backtester import engine
 from backtester.data_fetch import DataError, load_bars
-from backtester.models import BacktestRun, Trade
+from backtester.models import BacktestRun, OptimizationJob, Trade
 from backtester.sandbox_runner import StrategyProcess
 
 log = logging.getLogger(__name__)
@@ -133,6 +133,16 @@ def recover_stale():
         log.warning("event=stale_recovered requeued=%s failed=%s", requeued, failed)
 
 
+def finish_pending_optimizations():
+    """Queue the out-of-sample run for any optimization whose in-sample runs are all finished but which has
+    none yet. work_one does this after each run; this sweep covers runs that ended some other way (failed by
+    recover_stale, or a worker killed between finalising a run and calling finish_optimization)."""
+    pending = (OptimizationJob.objects.filter(split_date__isnull=False, runs__sample="in", runs__status=R.COMPLETED)
+               .exclude(runs__sample="out").exclude(runs__status__in=R.ACTIVE).distinct())
+    for job in pending:
+        finish_optimization(job)
+
+
 def finish_optimization(job):
     """Once every in-sample run is terminal, queue one out-of-sample run for the best (by Sharpe)."""
     runs = list(job.runs.filter(sample="in"))
@@ -191,10 +201,14 @@ def work_forever(poll_s=2.0, stop=lambda: False):
     log.info("event=worker_started worker=%s", wid)
     last_recover = 0.0
     while not stop():
-        if time.monotonic() - last_recover > 30:
-            recover_stale()
-            last_recover = time.monotonic()
+        # Outside a request Django never recycles connections; without this a worker keeps a dead
+        # connection forever after a database restart.
+        close_old_connections()
         try:
+            if time.monotonic() - last_recover > 30:
+                recover_stale()
+                finish_pending_optimizations()
+                last_recover = time.monotonic()
             busy = work_one(wid)
         except Exception:
             log.exception("event=worker_loop_error")
