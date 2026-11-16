@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 
 from backtester import data_fetch, engine, jobs
 from backtester.engine import Params, StrategyError, simulate
-from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, Trade
+from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, SymbolCoverage, Trade
 from backtester.sandbox_runner import StrategyProcess
 
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
@@ -186,6 +186,50 @@ class DataTests(TestCase):
         self.assertIsNone(data_fetch._to_bar("X", T0, 10, 9, 8, 11, 0))  # high < close
         self.assertIsNone(data_fetch._to_bar("X", T0, float("nan"), 1, 1, 1, 0))
 
+    def test_refetch_replaces_bars_so_one_symbol_stays_on_one_price_scale(self):
+        # First fetch: prices around 100. Later the provider restates history (e.g. a 2:1 split) to ~50.
+        old = make_bars("SPLT", date(2023, 9, 1), 200, price=100)
+        data_fetch.load_bars("SPLT", date(2024, 1, 1), date(2024, 3, 1), fetch=lambda *a: (old, 0))
+        new = make_bars("SPLT", date(2023, 9, 1), 300, price=50)
+        calls = []
+
+        def fetch(symbol, start, end):
+            calls.append((start, end))
+            return new, 0
+        _, bars, _ = data_fetch.load_bars("SPLT", date(2024, 1, 1), date(2024, 6, 1), fetch=fetch)
+        # The whole known span is downloaded again, not just the missing tail...
+        self.assertLessEqual(calls[0][0], date(2023, 9, 23))
+        # ...and every stored bar is on the new scale: no old ~100 prices left next to new ~50 ones.
+        self.assertTrue(all(b.close < 60 for b in Bar.objects.filter(symbol="SPLT")))
+        self.assertTrue(all(b.close < 60 for b in bars))
+
+    def test_covered_span_is_not_fetched_again(self):
+        # A symbol listed after the warm-up window can never satisfy the edge check; once its span was
+        # fetched, it must not be downloaded again on every run.
+        late = make_bars("NEWCO", date(2024, 1, 10), 100)
+        fetch = mock.Mock(return_value=(late, 0))
+        data_fetch.load_bars("NEWCO", date(2024, 1, 1), date(2024, 3, 1), fetch=fetch)
+        _, _, m = data_fetch.load_bars("NEWCO", date(2024, 1, 1), date(2024, 3, 1), fetch=fetch)
+        fetch.assert_called_once()
+        self.assertTrue(any(w.startswith("data starts") for w in m["warnings"]))  # still labelled
+
+    def test_failed_or_empty_fetch_keeps_bars_and_records_no_coverage(self):
+        Bar.objects.bulk_create(make_bars("KEEP", date(2023, 9, 1), 200))
+
+        def boom(*a):
+            raise ConnectionError("provider down")
+        _, bars, _ = data_fetch.load_bars("KEEP", date(2024, 1, 1), date(2024, 3, 1), fetch=boom)
+        self.assertTrue(bars)
+        data_fetch.load_bars("KEEP", date(2024, 1, 1), date(2024, 3, 1), fetch=lambda *a: ([], 0))
+        self.assertEqual(Bar.objects.filter(symbol="KEEP").count(), 200)
+        self.assertFalse(SymbolCoverage.objects.filter(symbol="KEEP").exists())
+
+    def test_coverage_excludes_the_fetch_day(self):
+        today = datetime.now(UTC).date()
+        rows = make_bars("TODAY", today - timedelta(days=200), 200)
+        data_fetch.load_bars("TODAY", today - timedelta(days=30), today, fetch=lambda *a: (rows, 0))
+        self.assertEqual(SymbolCoverage.objects.get(symbol="TODAY").until, today - timedelta(days=1))
+
     def test_no_data_raises(self):
         with self.assertRaises(data_fetch.DataError):
             data_fetch.load_bars("NOPE", date(2024, 1, 1), date(2024, 2, 1), fetch=lambda *a: ([], 0))
@@ -199,6 +243,8 @@ class JobAndApiTests(TestCase):
         self.builtin = Strategy.objects.get(name__startswith="SMA Crossover")
         self.custom = Strategy.objects.create(name="c", code="def on_bar(b,i,s):\n    return 'HOLD'")
         Bar.objects.bulk_create(make_bars("AAPL", date(2023, 9, 1), 500))
+        SymbolCoverage.objects.create(symbol="AAPL", start=date(2023, 9, 1), until=date(2025, 1, 12),
+                                      fetched_at=timezone.now())  # tests never reach the real provider
 
     def body(self, **kw):
         return {"strategy": self.builtin.id, "symbol": "aapl", "start_date": "2024-01-01",
@@ -277,6 +323,60 @@ class JobAndApiTests(TestCase):
         self.assertEqual(len(detail["runs"]), 3)
         self.assertTrue(detail["runs"][0]["equity_curve"])
 
+    def test_stop_tighter_than_slippage_rejected(self):
+        r = self.api.post("/api/runs/", self.body(slippage_pct="0.01", stop_loss_pct="0.005"), format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("stop_loss_pct", r.json())
+
+    def test_optimization_finishes_when_last_in_sample_run_fails_via_stale_recovery(self):
+        r = self.api.post("/api/optimizations/", self.body(stop_loss_options=["0.05", "0.1"],
+                                                           take_profit_options=["0.2"]), format="json")
+        job = OptimizationJob.objects.get(id=r.json()["id"])
+        first, second = job.runs.order_by("id")
+        self.assertTrue(jobs.work_one("w"))  # first completes; finish_optimization sees second still active
+        # The second run's worker died and the run exhausted its retries.
+        BacktestRun.objects.filter(id=second.id).update(status="running", attempts=3, worker_id="dead",
+                                                        heartbeat_at=timezone.now() - timedelta(hours=1))
+        jobs.recover_stale()
+        self.assertEqual(job.runs.get(id=second.id).status, "failed")
+        self.assertEqual(jobs.optimization_status(job), "running")  # stuck before the fix
+        jobs.finish_pending_optimizations()
+        while jobs.work_one("w"):
+            pass
+        self.assertEqual(job.runs.filter(sample="out", status="completed").count(), 1)
+        self.assertEqual(jobs.optimization_status(job), "partially_completed")
+        jobs.finish_pending_optimizations()  # idempotent
+        self.assertEqual(job.runs.filter(sample="out").count(), 1)
+
+    def test_optimization_list_does_not_load_equity_curves(self):
+        self.api.post("/api/optimizations/", self.body(stop_loss_options=["0.05"], take_profit_options=["0.2"]),
+                      format="json")
+        while jobs.work_one("w"):
+            pass
+        from backtester.views import OptimizationJobListCreateView
+        job = OptimizationJobListCreateView.queryset.all()[0]
+        for run in job.runs.all():
+            self.assertIn("equity_curve", run.get_deferred_fields())
+        listed = self.api.get("/api/optimizations/").json()["results"][0]
+        self.assertEqual(listed["status"], "completed")
+
+    def test_spoofed_forwarded_for_does_not_bypass_throttle(self):
+        rf = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+        with self.settings(REST_FRAMEWORK=rf):
+            codes = [self.api.post("/api/runs/", self.body(), format="json",
+                                   HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7").status_code
+                     for i in range(11)]
+        self.assertEqual(codes[-1], 429)  # jobs scope is 10/min; a fresh fake IP per request doesn't help
+
     def test_health(self):
         self.assertEqual(self.api.get("/health/live").status_code, 200)
         self.assertEqual(self.api.get("/health/ready").status_code, 200)
+
+
+class WorkerLoopTests(TestCase):
+    def test_recycles_connections_and_survives_recovery_errors(self):
+        n = []
+        with mock.patch.object(jobs, "close_old_connections") as close,                 mock.patch.object(jobs, "recover_stale", side_effect=RuntimeError("db down")),                 mock.patch.object(jobs, "work_one", return_value=False), mock.patch.object(jobs.time, "sleep"), \
+                self.assertLogs("backtester.jobs", "ERROR"):
+            jobs.work_forever(stop=lambda: n.append(1) or len(n) > 3)
+        self.assertEqual(close.call_count, 3)  # once per loop, and the loop kept going after errors
