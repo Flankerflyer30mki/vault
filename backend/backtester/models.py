@@ -20,6 +20,18 @@ class Bar(models.Model):
         return f"{self.symbol} @ {self.ts}"
 
 
+class SymbolCoverage(models.Model):
+    """Date span already requested from the provider for a symbol. Within this span the stored bars are
+    whatever the provider has (late listings and market closures included), so they are not fetched again."""
+    symbol = models.CharField(max_length=20, unique=True)
+    start = models.DateField()
+    until = models.DateField()  # last date that was complete when fetched (before the fetch day)
+    fetched_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.symbol} {self.start}..{self.until}"
+
+
 class Strategy(models.Model):
     name = models.CharField(max_length=100)
     code = models.TextField()
