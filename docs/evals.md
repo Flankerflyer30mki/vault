@@ -461,6 +461,7 @@ and links and removes Buy and Hold; re-upgrade gives the same experiments.
 | An invalid MACD pair was reported 4 times (once per linked path) | `test_invalid_combinations_are_skipped_and_reported` | Reasons de-duplicated |
 | `makemigrations` can't safely detect a rename non-interactively | Design check before writing `0018` | Hand-written migration, verified with `makemigrations --check` and the rehearsal |
 | The legacy-migration test's historical model names (`OptimizationJob` at `0015`) | Rename review | Left unchanged on purpose: it reads the schema as it was at `0015` |
+| CI: all 21 frontend tests passed but Vitest failed the job on an unhandled error after the comparison test | First CI run on PR #4 (not reproducible locally: timing) | After submitting, the form navigates to the results page, which rendered with an unset `usePoll` mock. The mock now defaults to the hook's real first state (loading), and the test asserts the navigation |
 
 ## Phase 3 · Observations
 - **Profiling beat intuition.** The planned optimisation (the cache) helped; the unplanned one (heartbeat) helped three times
