@@ -2,8 +2,9 @@ import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from "react-
 import { AuthProvider, GuestOnly, RequireAuth, useAuth } from "./auth";
 import Account from "./pages/Account";
 import { ForgotPassword, Login, ResetPassword, Signup, VerifyEmail } from "./pages/Auth";
-import Comparison from "./pages/Comparison";
+import ComparisonTrigger from "./pages/ComparisonTrigger";
 import Dashboard from "./pages/Dashboard";
+import ExperimentDetail from "./pages/ExperimentDetail";
 import OptimizationTrigger from "./pages/OptimizationTrigger";
 import RunDetail from "./pages/RunDetail";
 import RunTrigger from "./pages/RunTrigger";
@@ -26,6 +27,7 @@ function Nav() {
           </NavLink>
           <NavLink to="/strategies">Strategies</NavLink>
           <NavLink to="/run">New Backtest</NavLink>
+          <NavLink to="/compare">Compare</NavLink>
           <NavLink to="/optimize">Optimize</NavLink>
           <span className="nav-spacer" />
           <NavLink to="/account" className="nav-user">
@@ -87,7 +89,9 @@ function App() {
             <Route path="/run" element={page(<RunTrigger />)} />
             <Route path="/runs/:id" element={page(<RunDetail />)} />
             <Route path="/optimize" element={page(<OptimizationTrigger />)} />
-            <Route path="/optimize/:id" element={page(<Comparison />)} />
+            <Route path="/compare" element={page(<ComparisonTrigger />)} />
+            <Route path="/experiments/:id" element={page(<ExperimentDetail />)} />
+            <Route path="/optimize/:id" element={page(<ExperimentDetail />)} />
           </Routes>
         </div>
       </AuthProvider>

@@ -12,7 +12,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from backtester import data_fetch, engine, jobs
 from backtester.engine import Params, StrategyError, simulate
-from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, SymbolCoverage, Trade
+from backtester.models import BacktestRun, Bar, Experiment, Strategy, SymbolCoverage, Trade
 from backtester.sandbox_runner import StrategyProcess
 
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
@@ -315,7 +315,7 @@ class JobAndApiTests(TestCase):
         r = self.api.post("/api/optimizations/", self.body(stop_loss_options=["0.05", "0.1"],
                                                            take_profit_options=["0.2"]), format="json")
         self.assertEqual(r.status_code, 201, r.content)
-        job = OptimizationJob.objects.get(id=r.json()["id"])
+        job = Experiment.objects.get(id=r.json()["id"])
         first, second = job.runs.order_by("id")
         BacktestRun.objects.filter(id=second.id).update(strategy_code="def on_bar(b,i,s):\n    return 1/0")
         while jobs.work_one("w"):
@@ -326,10 +326,10 @@ class JobAndApiTests(TestCase):
         self.assertEqual((oos.status, oos.start_date), ("completed", job.split_date))
         self.assertEqual(oos.owner_id, self.user.id)  # queued by the worker, still owned by the job's owner
         self.assertLess(job.runs.get(id=first.id).end_date, job.split_date)  # train never overlaps test
-        self.assertEqual(jobs.optimization_status(job), "partially_completed")
+        self.assertEqual(jobs.experiment_status(job), "partially_completed")
         detail = self.api.get(f"/api/optimizations/{job.id}/").json()
         self.assertEqual(len(detail["runs"]), 3)
-        self.assertTrue(detail["runs"][0]["equity_curve"])
+        self.assertTrue(detail["runs"][0]["curve"])  # Phase 3: downsampled curve (D-062) instead of the full one
 
     def test_stop_tighter_than_slippage_rejected(self):
         r = self.api.post("/api/runs/", self.body(slippage_pct="0.01", stop_loss_pct="0.005"), format="json")
@@ -339,7 +339,7 @@ class JobAndApiTests(TestCase):
     def test_optimization_finishes_when_last_in_sample_run_fails_via_stale_recovery(self):
         r = self.api.post("/api/optimizations/", self.body(stop_loss_options=["0.05", "0.1"],
                                                            take_profit_options=["0.2"]), format="json")
-        job = OptimizationJob.objects.get(id=r.json()["id"])
+        job = Experiment.objects.get(id=r.json()["id"])
         first, second = job.runs.order_by("id")
         self.assertTrue(jobs.work_one("w"))  # first completes; finish_optimization sees second still active
         # The second run's worker died and the run exhausted its retries.
@@ -347,12 +347,12 @@ class JobAndApiTests(TestCase):
                                                         heartbeat_at=timezone.now() - timedelta(hours=1))
         jobs.recover_stale()
         self.assertEqual(job.runs.get(id=second.id).status, "failed")
-        self.assertEqual(jobs.optimization_status(job), "running")  # stuck before the fix
+        self.assertEqual(jobs.experiment_status(job), "running")  # stuck before the fix
         jobs.finish_pending_optimizations()
         while jobs.work_one("w"):
             pass
         self.assertEqual(job.runs.filter(sample="out", status="completed").count(), 1)
-        self.assertEqual(jobs.optimization_status(job), "partially_completed")
+        self.assertEqual(jobs.experiment_status(job), "partially_completed")
         jobs.finish_pending_optimizations()  # idempotent
         self.assertEqual(job.runs.filter(sample="out").count(), 1)
 
@@ -361,8 +361,8 @@ class JobAndApiTests(TestCase):
                       format="json")
         while jobs.work_one("w"):
             pass
-        from backtester.views import OptimizationJobListCreateView
-        view = OptimizationJobListCreateView()
+        from backtester.views import ExperimentListCreateView
+        view = ExperimentListCreateView()
         view.request = mock.Mock(user=self.user)
         job = view.get_queryset()[0]
         for run in job.runs.all():

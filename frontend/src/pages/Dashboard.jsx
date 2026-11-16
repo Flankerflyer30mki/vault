@@ -7,7 +7,7 @@ import { Disclaimer } from "../components";
 const QUOTA_LABELS = {
   active_jobs: "Jobs running",
   runs_per_day: "Backtests (last 24 h)",
-  optimizations_per_day: "Optimizations (last 24 h)",
+  experiments_per_day: "Comparisons + optimizations (last 24 h)",
   strategies: "Saved strategies",
 };
 
@@ -65,7 +65,7 @@ function Dashboard() {
           if (cancelled) return;
           setData(res.data);
           setError("");
-          const busy = res.data.active_runs.length || res.data.optimizations.some((o) => o.status === "running");
+          const busy = res.data.active_runs.length || res.data.experiments.some((o) => o.status === "running");
           if (busy) timer = setTimeout(load, 3000); // refresh only while something is running
         })
         .catch((err) => !cancelled && setError(errorText(err)));
@@ -86,6 +86,9 @@ function Dashboard() {
       <div className="quick-actions">
         <Link className="button" to="/run">
           New backtest
+        </Link>
+        <Link className="button" to="/compare">
+          Compare strategies
         </Link>
         <Link className="button" to="/optimize">
           New optimization
@@ -184,31 +187,33 @@ function Dashboard() {
       </section>
 
       <section className="dash-section">
-        <h3>Recent optimizations</h3>
-        {data.optimizations.length === 0 ? (
+        <h3>Recent comparisons and optimizations</h3>
+        {data.experiments.length === 0 ? (
           <p className="hint">
-            None yet. <Link to="/optimize">Try one</Link>: the best in-sample settings are re-tested once on held-out
-            data.
+            None yet. <Link to="/compare">Compare strategies</Link> side by side, or{" "}
+            <Link to="/optimize">optimize one</Link>: the best in-sample settings are re-tested once on held-out data.
           </p>
         ) : (
           <table className="trade-table">
             <thead>
               <tr>
                 <th>Job</th>
-                <th>Strategy</th>
-                <th>Symbol</th>
+                <th>What</th>
+                <th>Symbols</th>
                 <th>Status</th>
                 <th>Out-of-sample result</th>
               </tr>
             </thead>
             <tbody>
-              {data.optimizations.map((o) => (
+              {data.experiments.map((o) => (
                 <tr key={o.id}>
                   <td>
-                    <Link to={`/optimize/${o.id}`}>#{o.id}</Link>
+                    <Link to={`/experiments/${o.id}`}>#{o.id}</Link>
                   </td>
-                  <td>{o.strategy_name}</td>
-                  <td>{o.symbol}</td>
+                  <td>
+                    {o.kind === "comparison" ? "Comparison" : "Optimization"}: {o.title}
+                  </td>
+                  <td>{o.kind === "comparison" ? o.symbols.join(", ") : o.symbol}</td>
                   <td>
                     {o.status.replace("_", " ")}
                     {o.status === "running" && (
@@ -219,7 +224,9 @@ function Dashboard() {
                     )}
                   </td>
                   <td>
-                    {o.out_of_sample?.status === "completed" ? (
+                    {o.kind === "comparison" ? (
+                      <span className="hint">—</span>
+                    ) : o.out_of_sample?.status === "completed" ? (
                       <Versus ret={o.out_of_sample.total_return} bh={o.out_of_sample.buy_and_hold_return} />
                     ) : (
                       <span className="hint">{o.out_of_sample ? o.out_of_sample.status : "not yet"}</span>

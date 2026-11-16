@@ -65,19 +65,32 @@ class Strategy(models.Model):
         return self.name
 
 
-class OptimizationJob(models.Model):
-    """Grid search on the in-sample period; the best combination is then evaluated once
-    on the untouched out-of-sample tail. Status is derived from child runs, never stored."""
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="optimizations")
-    strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="optimization_jobs")
-    symbol = models.CharField(max_length=20)
+class Experiment(models.Model):
+    """A batch of child runs (fan-out) whose result is read from all of them together (fan-in).
+    Status is derived from the child runs, never stored.
+
+    - optimization: one strategy on one symbol; a grid (spec parameters × stop-loss × take-profit) runs on the in-sample
+      period, then the best combination runs once on the untouched out-of-sample tail.
+    - comparison: strategies × symbols over the same period and costs, plus an index benchmark per currency.
+    """
+    OPTIMIZATION, COMPARISON = "optimization", "comparison"
+    KIND_CHOICES = [(OPTIMIZATION, "optimization"), (COMPARISON, "comparison")]
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="experiments")
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=OPTIMIZATION)
+    # Optimization only: the strategy and symbol searched. A comparison lists its own in `config`.
+    strategy = models.ForeignKey(Strategy, null=True, blank=True, on_delete=models.CASCADE, related_name="experiments")
+    symbol = models.CharField(max_length=20, blank=True, default="")
     start_date = models.DateField()
     end_date = models.DateField()
-    split_date = models.DateField(null=True)  # in-sample < split_date <= out-of-sample
+    split_date = models.DateField(null=True)  # optimization: in-sample < split_date <= out-of-sample
     starting_cash = models.DecimalField(max_digits=14, decimal_places=2, default=10000)
     stop_loss_options = models.JSONField(default=list)
     take_profit_options = models.JSONField(default=list)
     cost_model = models.CharField(max_length=20, choices=COST_MODEL_CHOICES, default="flat")
+    # comparison: {"strategies": [ids], "symbols": [...]}; optimization: {"param_grid": {path: [values]},
+    # "skipped": [{"params": {...}, "reason": "..."}]}
+    config = models.JSONField(default=dict, blank=True)
     idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -87,20 +100,23 @@ class OptimizationJob(models.Model):
         indexes = [models.Index(fields=["owner", "-created_at"], name="idx_opt_owner_created")]
 
     def __str__(self):
-        return f"Optimization {self.id} - {self.symbol}"
+        return f"Experiment {self.id} ({self.kind})"
 
 
 class BacktestRun(models.Model):
     QUEUED, PREPARING, RUNNING, COMPLETED, FAILED = "queued", "preparing_data", "running", "completed", "failed"
     STATUS_CHOICES = [(s, s) for s in (QUEUED, PREPARING, RUNNING, COMPLETED, FAILED)]
     ACTIVE = (QUEUED, PREPARING, RUNNING)
-    SAMPLE_CHOICES = [("full", "full"), ("in", "in-sample"), ("out", "out-of-sample")]
+    SAMPLE_CHOICES = [("full", "full"), ("in", "in-sample"), ("out", "out-of-sample"), ("bench", "benchmark")]
+    # Claim order is (priority, id): runs a person starts by hand go before batch children (D-059).
+    INTERACTIVE, BATCH = 0, 1
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="runs")
     strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="runs")
-    optimization = models.ForeignKey(OptimizationJob, null=True, blank=True, on_delete=models.CASCADE,
-                                     related_name="runs")
-    sample = models.CharField(max_length=4, choices=SAMPLE_CHOICES, default="full")
+    experiment = models.ForeignKey(Experiment, null=True, blank=True, on_delete=models.CASCADE, related_name="runs")
+    sample = models.CharField(max_length=10, choices=SAMPLE_CHOICES, default="full")
+    priority = models.PositiveSmallIntegerField(default=INTERACTIVE)
+    grid_params = models.JSONField(null=True, blank=True)  # optimization child: the values this run tried
     symbol = models.CharField(max_length=20)
     start_date = models.DateField()
     end_date = models.DateField()
@@ -144,13 +160,17 @@ class BacktestRun(models.Model):
     max_drawdown = models.FloatField(null=True, blank=True)
     win_rate = models.FloatField(null=True, blank=True)
     buy_and_hold_return = models.FloatField(null=True, blank=True)
+    sortino_ratio = models.FloatField(null=True, blank=True)
+    calmar_ratio = models.FloatField(null=True, blank=True)
+    exposure = models.FloatField(null=True, blank=True)  # share of bars ending in the market
+    trade_count = models.IntegerField(null=True, blank=True)  # closed round trips
     equity_curve = models.JSONField(null=True, blank=True)  # [[date, value], ...]
 
     class Meta:
-        indexes = [models.Index(fields=["status", "id"], name="idx_run_status_id"),  # queue claim + admission count
+        indexes = [models.Index(fields=["status", "priority", "id"], name="idx_run_claim"),  # claim + admission count
                    models.Index(fields=["owner", "-created_at"], name="idx_run_owner_created")]  # lists + quotas
-        constraints = [models.UniqueConstraint(fields=["optimization"], condition=models.Q(sample="out"),
-                                               name="uq_run_one_oos_per_optimization"),
+        constraints = [models.UniqueConstraint(fields=["experiment"], condition=models.Q(sample="out"),
+                                               name="uq_run_one_oos_per_experiment"),
                        models.UniqueConstraint(fields=["owner", "idempotency_key"], name="uq_run_owner_idem_key")]
 
     def __str__(self):
