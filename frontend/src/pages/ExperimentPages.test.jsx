@@ -34,6 +34,9 @@ beforeEach(() => {
       : url === "/strategies/" ? Promise.resolve({ data: { results: STRATEGIES } })
         : Promise.reject(new Error(`unexpected GET ${url}`)));
   api.post.mockResolvedValue({ data: { id: 42 } });
+  // Default = the real hook's first state (still loading). The comparison form navigates to the results page after
+  // submitting; without a default that page could render after the test with an unset mock and crash (seen on CI).
+  usePoll.mockReturnValue({ data: null, error: "" });
 });
 
 afterEach(() => {
@@ -73,6 +76,7 @@ describe("ComparisonTrigger", () => {
     const [url, body] = api.post.mock.calls[0];
     expect(url).toBe("/experiments/");
     expect(body).toMatchObject({ kind: "comparison", strategies: [3, 4], symbols: ["AAPL", "RELIANCE.NS", "^NSEI"], stop_loss_pct: null });
+    expect(await screen.findByText("Loading…")).toBeTruthy(); // it navigated to the new experiment's page
   });
 });
 
