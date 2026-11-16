@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import OptimizationTrigger from "./pages/OptimizationTrigger";
 import RunDetail from "./pages/RunDetail";
 import RunTrigger from "./pages/RunTrigger";
+import StrategyBuilder from "./pages/StrategyBuilder";
 import StrategyList from "./pages/StrategyList";
 import "./App.css";
 
@@ -81,6 +82,8 @@ function App() {
             <Route path="/" element={page(<Dashboard />)} />
             <Route path="/account" element={page(<Account />)} />
             <Route path="/strategies" element={page(<StrategyList />)} />
+            <Route path="/strategies/new" element={page(<StrategyBuilder />)} />
+            <Route path="/strategies/:id/edit" element={page(<StrategyBuilder />)} />
             <Route path="/run" element={page(<RunTrigger />)} />
             <Route path="/runs/:id" element={page(<RunDetail />)} />
             <Route path="/optimize" element={page(<OptimizationTrigger />)} />

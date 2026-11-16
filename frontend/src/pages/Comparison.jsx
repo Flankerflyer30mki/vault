@@ -27,6 +27,7 @@ function Comparison() {
   if (!job) return error ? <p className="error">{error}</p> : <p>Loading…</p>;
 
   const runs = job.runs || [];
+  const cur = (v) => money(v, job.currency);
   const inSample = runs.filter((r) => r.sample !== "out");
   const oos = runs.find((r) => r.sample === "out");
   const done = inSample.filter((r) => r.status === "completed");
@@ -74,7 +75,7 @@ function Comparison() {
           </div>
           {oos.status === "completed" && (
             <div className="sandbox-stats">
-              <div><span>Final Value</span><strong>{money(oos.final_value)}</strong></div>
+              <div><span>Final Value</span><strong>{cur(oos.final_value)}</strong></div>
               <div><span>CAGR</span><strong>{pct(oos.cagr)}</strong></div>
               <div><span>Sharpe</span><strong>{num(oos.sharpe_ratio)}</strong></div>
               <div><span>Max DD</span><strong>{pct(oos.max_drawdown)}</strong></div>
@@ -108,12 +109,12 @@ function Comparison() {
                   <td><Link to={`/runs/${r.id}`}>#{r.id}</Link></td>
                   <td>{pct(r.stop_loss_pct, 0)}</td>
                   <td>{pct(r.take_profit_pct, 0)}</td>
-                  <td>{money(r.final_value)}</td>
+                  <td>{cur(r.final_value)}</td>
                   <td>{pct(r.cagr)}</td>
                   <td>{num(r.sharpe_ratio)}</td>
                   <td>{pct(r.max_drawdown)}</td>
                   <td>{pct(r.win_rate)}</td>
-                  <td>{money(parseFloat(r.total_commission || 0) + parseFloat(r.total_slippage || 0))}</td>
+                  <td>{cur(parseFloat(r.total_commission || 0) + parseFloat(r.total_slippage || 0))}</td>
                 </tr>
               ))}
             </tbody>
@@ -129,7 +130,7 @@ function Comparison() {
                 <Tooltip
                   contentStyle={{ background: "#1a1a1a", border: "1px solid #444", fontSize: "12px", maxWidth: "240px" }}
                   labelStyle={{ color: "#888" }}
-                  formatter={(v, name) => [money(v), name]}
+                  formatter={(v, name) => [cur(v), name]}
                 />
                 {done.map((r, idx) => (
                   <Line key={r.id} type="monotone" dataKey={`run_${r.id}`} name={label(r)} stroke={COLORS[idx % COLORS.length]} strokeWidth={1.5} dot={false} connectNulls />

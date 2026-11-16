@@ -103,3 +103,61 @@ Alternative not taken: storing unadjusted prices plus corporate actions and adju
 | Gained | Gave up | Revisit when |
 |---|---|---|
 | The highest-risk part (cookies, CSRF, proxy) is proven end to end | UI edge cases (form errors, the guest banner, redirects) are only covered by lint, build and manual checks | **Phase 2**: the builder UI needs component tests |
+Status: done in Phase 2 (D-039); see below.
+
+## Phase 2
+
+### D-033 · Interpret the spec instead of generating code
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| No user input ever becomes code; builder strategies run in production with custom code off | Builder strategies can express only what the operators allow (no loops, no state, no custom maths) | Users need logic the spec can't express → add operators or nesting (spec v2), not code generation |
+| **9.8× faster** than the sandbox for the same strategy (30 ms vs 299 ms over 2,520 bars) | Two execution paths to maintain (sandbox for code, interpreter for specs) | — |
+| One small evaluator to test; parity with the Python built-in proven trade for trade | The "View as Python" text is a rendering, so it could drift from what the interpreter does | A rendering bug reported → add a test that executes the rendered text in a test-only harness and compares signals |
+
+### D-034 · Flat AND/OR groups
+| Gained | Gave up |
+|---|---|
+| A form anyone can fill in; simple for an AI to produce (Phase 5) | No `(A and B) or C`. Workaround: two strategies, compared in Phase 3 |
+
+### D-036 · Long-only
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Realistic for Indian cash equities (no overnight retail shorts); unchanged engine invariants; clean comparison with buy-and-hold | No profit from falling prices, only avoidance by holding cash | Derivatives arrive (D-040): bearish views via futures/options |
+
+### D-042 · Exit wins, no position state
+| Gained | Gave up |
+|---|---|
+| Signals are a pure function of bars: precomputed in one pass, trivially free of look-ahead | A flat strategy never enters on a bar where its exit rule is also true. Usually what you want; occasionally a missed entry |
+
+### D-043 · Dynamic warm-up
+| Gained | Gave up |
+|---|---|
+| SMA-200 or EMA-50 are valid from the first test bar | Longer data downloads (up to 600 bars ≈ 3.3 calendar years before the start) |
+| EMA/RSI seeds mostly fade (3n bars ≈ 5% residual weight for EMA) | Smoothed values still depend slightly on the available history, so the same date can show a slightly different RSI in two runs with different start dates |
+
+### D-038 · India delivery cost model
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Realistic per-side costs (stamp duty buy-only, GST on some charges) | Flat per-order charges (DP charges, minimum brokerage) aren't modelled | Small-capital backtests where a ₹15 DP charge matters → add a flat-fee term to the engine |
+| Rates visible in one module and in the UI | Rates are fixed in code; a regulatory change needs a deploy, and old runs keep the rates they ran with (by design) | Rates change → update `costs.py`, note the date |
+
+### D-045 · Server is the only validator
+| Gained | Gave up |
+|---|---|
+| One allowlist; the client can't drift from the server | A network round trip per edit (debounced to 400 ms; preview is cheap, under the generous read throttle) |
+| Error messages identical in live preview and on save | Without the API the form can't validate at all (acceptable: it can't save either) |
+
+### D-046 · Delete refused when runs exist
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| A result can never lose the strategy that produced it | Users can't clean up a used strategy | Archive/hide instead of delete, if users ask |
+
+### D-047 · 9 decimal places for fees
+| Gained | Gave up |
+|---|---|
+| India rates stored exactly | Rolling back migration `0016` rounds them to 6 places (measured in the rehearsal) |
+
+### D-039 · Frontend component tests
+| Gained | Gave up |
+|---|---|
+| Builder logic tested where bugs live (form ↔ spec, error placement, limits); 13 tests in ~8 s | 5 dev dependencies (Vitest, jsdom, Testing Library). Production `npm audit` stays at 0; the dev tree has 3 moderate advisories, all in `minimatch` under eslint (already a dependency before Phase 2), none from the new packages |
