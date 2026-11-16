@@ -36,7 +36,7 @@ Frontend (from `frontend/`): `npm ci`, `npm run dev` (proxies `/api` to `VITE_PR
 
 CI (`.github/workflows/ci.yml`) runs tests on Postgres 16, the migration-drift check, a check that `DEBUG=0` refuses to start without `SECRET_KEY`, `pip-audit`, frontend lint/test/build, `npm audit`, and both Docker builds.
 
-Tests must never reach Yahoo: give fixtures a `SymbolCoverage` row that spans the run's warm-up (builder warm-up can be up to 600 bars × 2 calendar days before the start), and patch `backtester.data_fetch.download` (`load_bars` looks it up per call). Phase records live in `docs/` (`decisions.md`, `changes.md`, `tradeoff.md`, `evals.md`, `concepts.md`); update them with each phase.
+Tests must never reach Yahoo: give fixtures a `SymbolCoverage` row that spans the run's warm-up (builder warm-up can be up to 600 bars × 2 calendar days before the start), and patch `backtester.data_fetch.download` (`load_bars` looks it up per call). Phase records live in `docs/` (`decisions.md`, `changes.md`, `tradeoff.md`, `evals.md`, `concepts.md`, `improvements.md`); update them with each phase. `improvements.md` lists each improvement as why, before, change and measured result.
 
 ## Architecture
 
