@@ -5,7 +5,8 @@ x-env: &env
   DATABASE_URL: postgres://postgres:vaultpass@db:5432/vault
   DB_SSLMODE: disable
   ALLOWED_HOSTS: localhost,127.0.0.1,backend
-  CORS_ALLOWED_ORIGINS: http://localhost:5173
+  NUM_PROXIES: "1"  # the frontend's nginx forwards /api, so it is the one proxy in front of Django
+  FRONTEND_URL: http://localhost:5173  # links in emails (printed to the backend log in development)
   ALLOW_CUSTOM_CODE: "1"  # local only: the subprocess runner is NOT a security boundary
 
 services:

@@ -1,7 +1,8 @@
 """Vault settings. Everything deploy-specific comes from the environment.
 
-Required in production (DEBUG unset/0): SECRET_KEY, DATABASE_URL (or DB_* vars),
-ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS. Startup fails loudly if any of the first three is missing.
+Required in production (DEBUG unset/0): SECRET_KEY, DATABASE_URL (or DB_* vars), ALLOWED_HOSTS.
+Startup fails loudly if any is missing. Also set in production: CSRF_TRUSTED_ORIGINS (the frontend's origin,
+because the browser reaches the API through the frontend's /api proxy), FRONTEND_URL and the EMAIL_* vars.
 """
 import os
 from pathlib import Path
@@ -31,23 +32,56 @@ if env("RENDER_EXTERNAL_HOSTNAME"):  # injected by Render
     ALLOWED_HOSTS.append(env("RENDER_EXTERNAL_HOSTNAME"))
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS environment variable is required when DEBUG is off")
-CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS") or (["http://localhost:5173"] if DEBUG else [])
-CORS_ALLOW_HEADERS = ["accept", "authorization", "content-type", "user-agent", "x-csrftoken", "x-requested-with", "idempotency-key"]
+# The browser reaches the API on the frontend's own origin (Vercel rewrite / Vite proxy / nginx), so there
+# is no CORS. Django checks the Origin header of unsafe requests against the Host it sees; behind a proxy that
+# rewrites Host, list the frontend origin here (e.g. https://vault.example.app).
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
-    "corsheaders",
+    "django.contrib.sessions",
     "rest_framework",
+    "accounts",
     "backtester",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# --- accounts and sessions
+AUTH_USER_MODEL = "accounts.User"
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+SESSION_COOKIE_AGE = 14 * 24 * 3600
+SESSION_COOKIE_HTTPONLY = True          # JavaScript (and so XSS) can never read the session id
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_HTTPONLY = False            # the SPA reads it and echoes it in X-CSRFToken (double-submit)
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = not DEBUG
+PASSWORD_RESET_TIMEOUT = 24 * 3600      # also bounds email-verification links
+FRONTEND_URL = env("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+# --- email: console in development; SMTP (e.g. Resend) when EMAIL_HOST is set
+EMAIL_HOST = env("EMAIL_HOST", "")
+EMAIL_BACKEND = ("django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
+                 else "django.core.mail.backends.console.EmailBackend")
+EMAIL_PORT = env_int("EMAIL_PORT", 587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env("EMAIL_USE_TLS", "1") == "1"
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "Vault <no-reply@localhost>")
 
 ROOT_URLCONF = "vault_core.urls"
 WSGI_APPLICATION = "vault_core.wsgi.application"
@@ -90,11 +124,14 @@ SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 0)  # enable once HTTPS is 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
-    "DEFAULT_PERMISSION_CLASSES": [],
+    # Session cookie auth. DRF enforces CSRF for authenticated unsafe requests; the auth views enforce it for
+    # anonymous ones too (login CSRF).
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
-    # ponytail: LocMemCache makes these per-process, per-IP limits. Shared cache if replicas > 1.
+    # ponytail: LocMemCache makes these per-process limits. Shared cache if replicas > 1. Signed-in users are
+    # counted per user; anonymous requests (auth endpoints) per IP.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     # Clients are identified by IP. Without NUM_PROXIES, DRF uses the whole X-Forwarded-For header, which a
     # client can set to anything to dodge throttling. 0 = use REMOTE_ADDR (no proxy); N = trust the address
@@ -104,6 +141,8 @@ REST_FRAMEWORK = {
         "read": env("THROTTLE_READ", "300/min"),
         "write": env("THROTTLE_WRITE", "30/min"),
         "jobs": env("THROTTLE_JOBS", "10/min"),
+        "auth": env("THROTTLE_AUTH", "10/min"),     # login, signup, password reset: slows password guessing
+        "guest": env("THROTTLE_GUEST", "5/hour"),   # guest creation, per IP
     },
 }
 
@@ -120,6 +159,14 @@ VAULT = {
     "STALE_AFTER_S": env_int("STALE_AFTER_S", 120),
     "MAX_ATTEMPTS": env_int("MAX_ATTEMPTS", 3),
     "OOS_FRACTION": float(env("OOS_FRACTION", "0.3")),
+    "GUEST_TTL_DAYS": env_int("GUEST_TTL_DAYS", 7),
+    # Per-user quotas by tier; override any value with QUOTA_<TIER>_<LIMIT>, e.g. QUOTA_VERIFIED_RUNS_PER_DAY.
+    "QUOTAS": {tier: {k: env_int(f"QUOTA_{tier.upper()}_{k.upper()}", v) for k, v in defaults.items()}
+               for tier, defaults in {
+                   "guest": {"active_jobs": 2, "runs_per_day": 20, "optimizations_per_day": 2},
+                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "optimizations_per_day": 3},
+                   "verified": {"active_jobs": 10, "runs_per_day": 200, "optimizations_per_day": 20},
+               }.items()},
 }
 
 LOGGING = {

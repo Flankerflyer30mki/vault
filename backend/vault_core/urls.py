@@ -20,5 +20,6 @@ def ready(request):
 urlpatterns = [
     path("health/live", live),
     path("health/ready", ready),
+    path("api/auth/", include("accounts.urls")),
     path("api/", include("backtester.urls")),
 ]

@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.conf import settings
 from rest_framework import serializers
 
+from accounts.quotas import visible_strategies_q
 from backtester.models import BacktestRun, OptimizationJob, Strategy, Trade
 from backtester.sandbox_runner import check_code
 
@@ -38,6 +39,15 @@ class TradeSerializer(serializers.ModelSerializer):
 
 
 class _RangeMixin:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only built-ins and the requester's own strategies can be referenced. Anything else fails as
+        # "object does not exist", which doesn't reveal that another user's strategy has that id.
+        request = self.context.get("request")
+        field = self.fields.get("strategy")
+        if request is not None and field is not None and not field.read_only and request.user.is_authenticated:
+            field.queryset = Strategy.objects.filter(visible_strategies_q(request.user))
+
     def validate_symbol(self, s):
         s = s.strip().upper()
         if not SYMBOL_RE.match(s):
