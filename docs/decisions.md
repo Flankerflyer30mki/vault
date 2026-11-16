@@ -22,6 +22,24 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-012 | 2 | Builder: form → JSON spec → generated Python → existing sandbox; API accepts JSON only | Accepted in principle |
 | D-013 | 4–5 | AI behind one provider module; Gemini free tier first | Accepted in principle |
 | D-014 | 6 | Build phase by phase on staging; release once at the end | Accepted |
+| D-015 | 1 | Custom User model, email as login | Accepted |
+| D-016 | 1 | Same-domain API (Vercel/Vite/nginx proxy `/api`) with Django login cookies and CSRF | Accepted |
+| D-017 | 1 | Sign-up, email verification and password reset now; console email in dev | Accepted |
+| D-018 | 1 | One-click guest accounts, convertible, deleted after 7 days | Accepted |
+| D-019 | 1 | Existing anonymous data moved to a hidden legacy account | Accepted |
+| D-020 | 1 | Everything private; other users' items return 404 | Accepted |
+| D-021 | 1 | Per-tier quotas plus per-IP limits on login, sign-up, reset and guest | Accepted |
+| D-022 | 1 | Dashboard v1 contents (no leaderboard yet) | Accepted |
+| D-023 | 1 | Account management: change password, change email, delete account | Accepted |
+| D-024 | 1 | Daily quotas use a rolling 24-hour window | Accepted |
+| D-025 | 1 | Lock the user's row while creating a job (exact quotas, race-free idempotency) | Accepted |
+| D-026 | 1 | Enforce CSRF explicitly on anonymous auth endpoints | Accepted |
+| D-027 | 1 | Remove `django-cors-headers` | Accepted |
+| D-028 | 1 | Compose frontend image: nginx (serves SPA plus `/api` proxy) instead of `serve` | Accepted |
+| D-029 | 1 | `vercel.json` rewrite uses a `VAULT_API_HOST` placeholder, replaced at deployment | Accepted |
+| D-030 | 1 | MD5 password hasher in account tests only | Accepted |
+| D-031 | 1 | Guest/session cleanup runs inside the worker loop, hourly | Accepted |
+| D-032 | 1 | Frontend verified by an end-to-end smoke test through the proxy, not unit tests (yet) | Accepted |
 
 ---
 
@@ -104,3 +122,97 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 
 ## D-014 · Build in phases, release once
 - **Decision:** Each phase merges to `main` with CI passing and is deployed to staging. Production gets one release at the end, after rehearsing migrations on a copy of production data and taking a backup.
+
+---
+
+# Phase 1 · Accounts and personal workspace (approved 2026-11-16)
+
+## D-015 · Custom User model with email as the login
+- **Options:** (A) a custom `accounts.User` with email as the login, (B) Django's default `User`.
+- **Decision:** A. Fields: `email` (unique, stored lowercase), `display_name`, `email_verified`, `is_guest`, `is_system`, `date_joined`. The user's tier (guest, unverified, verified) is derived from these flags.
+- **Why:** Django recommends setting up a custom user model at the start of a project, because switching later means rewriting migrations. Nothing in Vault referenced `auth.User` yet, so this was the cheapest moment. The `auth_user` table already in production stays unused.
+- **Interview angle:** why `AUTH_USER_MODEL` has to be decided early, and why it was still safe here (no existing foreign keys to `auth.User`).
+
+## D-016 · Same-domain API with Django session cookies
+- **Context:** The frontend (Vercel) and API (Render) are on different domains. Safari and Firefox block cookies sent to a different domain, so cookie logins don't work cross-domain.
+- **Options:** (A) a proxy makes `/api` same-domain, plus Django's session cookie (`HttpOnly`) and CSRF protection, (B) JWT tokens (`simplejwt`) with a refresh token stored in the browser, (C) a managed provider (Clerk/Auth0/Supabase).
+- **Decision:** A. Vercel forwards `/api/*` to Render, Vite does the same in development, and nginx does it in the compose frontend image. The frontend calls the relative path `/api`. CORS and `django-cors-headers` are removed.
+- **Why:** JavaScript can't read the login cookie, so an XSS bug can't steal it. Django's sessions and CSRF protection are well tested. There's no token refresh logic and no CORS. B is the fallback.
+- **Interview angle:** cross-domain cookie blocking, `SameSite`, and why login CSRF needs explicit protection (DRF only checks CSRF for users who are already logged in).
+
+## D-017 · Sign-up, email verification and password reset now
+- **Decision:** All three are built in Phase 1 using Django's token generators, which are tied to the user's state so a used or outdated link stops working. In development, emails are printed to the console. SMTP (e.g. Resend) is configured by environment variables at deployment. Unverified users can sign in but get the lower quota.
+- **Why:** A released app needs password reset. Verification ties the higher quota to a real email address.
+
+## D-018 · One-click guest accounts
+- **Decision:** `POST /api/auth/guest/` creates a temporary account and signs the visitor in. A guest can convert to a full account (email and password), keeping their data. Unconverted guests are deleted after `GUEST_TTL_DAYS` (7) by the worker's housekeeping loop.
+- **Why:** Recruiters and visitors can try the app with no sign-up, and nobody shares a demo account.
+
+## D-019 · Existing data goes to a hidden legacy account
+- **Decision:** A data migration creates an inactive system user (`legacy@system.vault.invalid`, no usable password) and assigns all existing runs, optimizations and custom strategies to it. Built-in strategies have no owner and are shared.
+
+## D-020 · Private by default; other users' items return 404
+- **Decision:** Every queryset is filtered to the logged-in user (built-in strategies are also visible). Another user's item returns **404, not 403**, so the API doesn't reveal that it exists. This also covers using another user's strategy in a new run, and their idempotency keys.
+
+## D-021 · Quotas per tier, plus per-IP limits on auth endpoints
+- **Decision:**
+
+  | Limit | Guest | Unverified | Verified |
+  |---|---|---|---|
+  | Active jobs (queued or running runs and optimizations; an optimization counts as 1) | 2 | 3 | 10 |
+  | Single backtests per rolling 24 hours | 20 | 30 | 200 |
+  | Optimizations per rolling 24 hours | 2 | 3 | 20 |
+
+  Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`). The global `MAX_ACTIVE_RUNS` cap stays. Login, sign-up and password reset are limited to `THROTTLE_AUTH` (10/min per IP), and guest creation to `THROTTLE_GUEST` (5/hour per IP). The existing job, read and write limits now count per user for signed-in users.
+- **Why:** The quotas bound how much compute one person can use. The per-IP limits slow down password guessing and mass sign-ups.
+
+## D-022 · Dashboard v1
+- **Includes:** runs in progress with progress; recent runs with return vs. buy & hold; my strategies plus built-ins; quota usage; quick actions; recent optimizations with their out-of-sample result. Served by one `GET /api/dashboard/` call.
+- **Excludes for now:** a "best strategies" leaderboard ranked by Sharpe (it encourages picking whatever looked luckiest; it returns in Phase 3 with adjusted Sharpe) and activity charts.
+
+## D-023 · Account management
+- **Decision:** Change password (requires the current one; the session stays signed in), change email (requires the password; email has to be verified again), and delete account (requires the password, except for guests; deletes all the user's data).
+
+## Phase 1 · Implementation decisions made while building
+
+## D-024 · Rolling 24-hour window for daily quotas
+- **Options:** (A) a rolling 24-hour window, (B) a calendar day (resetting at midnight UTC).
+- **Decision:** A.
+- **Why:** There's no burst at midnight UTC and no timezone confusion for users in India or the US. It's one indexed query on `(owner, created_at)`.
+
+## D-025 · Lock the user's row while creating a job
+- **Context:** A quota check followed by an insert is a race. Two requests sent at the same moment can both see "9 of 10" and both get in. The same race affected duplicate `Idempotency-Key` requests.
+- **Decision:** `IdempotentCreate` runs `select_for_update()` on the requesting user's row inside the create transaction, then re-checks the idempotency key and the quota.
+- **Why:** It only serialises one user's own requests, so other users never wait. Quotas become exact (unlike the global `MAX_ACTIVE_RUNS`, which stays a soft cap), and a duplicate key waits for the first request instead of failing.
+- **Interview angle:** check-then-act races, and why a lock per user beats a global lock.
+
+## D-026 · Explicit CSRF on anonymous endpoints
+- **Context:** DRF's `SessionAuthentication` only checks CSRF once a request is already signed in. Without an extra check, a hostile site could submit the login form and sign the victim into the attacker's account (login CSRF).
+- **Decision:** A `CsrfEnforced` mixin runs Django's CSRF check on every unsafe request to the auth views, signed in or not. A test client that behaves like a browser (`BrowserClient`) proves it, including that the token rotates on login.
+
+## D-027 · Remove `django-cors-headers`
+- **Decision:** Remove the package and its settings.
+- **Why:** With the API on the same origin, CORS has no job left. Keeping an allowlist nobody uses is a misconfiguration waiting to happen. It's also one less dependency to audit.
+
+## D-028 · nginx for the compose frontend image
+- **Decision:** The frontend image now serves the built SPA with nginx and forwards `/api` to `backend:8000`, passing the `Host` header (with port) through so Django's CSRF Origin check passes.
+- **Why:** `serve -s` can't proxy, and the same-origin setup has to work in every environment. Production uses Vercel, development uses Vite, and compose now uses nginx.
+
+## D-029 · Placeholder API host in `vercel.json`
+- **Context:** Vercel can't read environment variables inside `rewrites`.
+- **Decision:** `vercel.json` contains `https://VAULT_API_HOST/api/:path*`. Replacing it is a deployment checklist item, documented in the README.
+- **Revisit:** if a staging and a production frontend need different API hosts, use a Vercel middleware that reads an env var.
+
+## D-030 · Fast password hasher in account tests only
+- **Context:** PBKDF2 at Django's default of 1.2M iterations measured **209.7 ms per hash**. MD5 measured **0.024 ms**. The account tests hash passwords dozens of times.
+- **Decision:** Account test classes use `@override_settings(PASSWORD_HASHERS=[MD5])`. Production keeps PBKDF2, which the end-to-end smoke test exercises (sign-up took about 320 ms there).
+- **Why:** The tests check our logic, not Django's hashing. Without this, account tests would spend most of their time hashing.
+
+## D-031 · Cleanup inside the worker loop
+- **Decision:** `accounts.housekeeping.run()` (deletes expired guests and expired sessions) runs from `work_forever` once an hour.
+- **Why:** There's no cron and no scheduler service on Render's free tier, and the worker already runs a timed loop for stale-job recovery.
+
+## D-032 · How the frontend is verified
+- **Options:** (A) add Vitest and React Testing Library unit tests now, (B) an end-to-end smoke test through the real proxy plus lint and build.
+- **Decision:** B for Phase 1.
+- **Why:** The riskiest frontend change is the cookie, CSRF and proxy setup, which only an end-to-end test proves. Component unit tests are proposed for Phase 2, when the builder UI brings real client-side logic.

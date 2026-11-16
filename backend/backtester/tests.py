@@ -9,6 +9,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from accounts.models import User
 from backtester import data_fetch, engine, jobs
 from backtester.engine import Params, StrategyError, simulate
 from backtester.models import BacktestRun, Bar, OptimizationJob, Strategy, SymbolCoverage, Trade
@@ -239,9 +240,12 @@ class DataTests(TestCase):
 class JobAndApiTests(TestCase):
     def setUp(self):
         cache.clear()  # throttle counters
+        self.user = User.objects.create_user("trader@example.com", email_verified=True)
         self.api = APIClient()
+        self.api.force_login(self.user)
         self.builtin = Strategy.objects.get(name__startswith="SMA Crossover")
-        self.custom = Strategy.objects.create(name="c", code="def on_bar(b,i,s):\n    return 'HOLD'")
+        self.custom = Strategy.objects.create(name="c", code="def on_bar(b,i,s):\n    return 'HOLD'",
+                                              owner=self.user)
         Bar.objects.bulk_create(make_bars("AAPL", date(2023, 9, 1), 500))
         SymbolCoverage.objects.create(symbol="AAPL", start=date(2023, 9, 1), until=date(2025, 1, 12),
                                       fetched_at=timezone.now())  # tests never reach the real provider
@@ -280,9 +284,11 @@ class JobAndApiTests(TestCase):
         self.assertEqual(BacktestRun.objects.count(), 1)
 
     def test_queue_full_returns_503(self):
+        # The global cap counts everyone's work: other users fill the queue, this user is under their quota.
+        other = User.objects.create_user("busy@example.com", email_verified=True)
         for _ in range(30):
-            BacktestRun.objects.create(strategy=self.builtin, symbol="AAPL", start_date=date(2024, 1, 1),
-                                       end_date=date(2024, 2, 1))
+            BacktestRun.objects.create(owner=other, strategy=self.builtin, symbol="AAPL",
+                                       start_date=date(2024, 1, 1), end_date=date(2024, 2, 1))
         self.assertEqual(self.api.post("/api/runs/", self.body(), format="json").status_code, 503)
 
     def test_grid_limit_enforced_server_side(self):
@@ -292,8 +298,9 @@ class JobAndApiTests(TestCase):
         self.assertIn("limit is 4", str(r.content))
 
     def test_stale_job_requeued_then_failed(self):
-        run = BacktestRun.objects.create(strategy=self.builtin, symbol="AAPL", start_date=date(2024, 1, 1),
-                                         end_date=date(2024, 2, 1), status="running", attempts=1,
+        run = BacktestRun.objects.create(owner=self.user, strategy=self.builtin, symbol="AAPL",
+                                         start_date=date(2024, 1, 1), end_date=date(2024, 2, 1),
+                                         status="running", attempts=1,
                                          heartbeat_at=timezone.now() - timedelta(hours=1))
         jobs.recover_stale()
         run.refresh_from_db()
@@ -317,6 +324,7 @@ class JobAndApiTests(TestCase):
         self.assertEqual(job.runs.filter(sample="out").count(), 1)
         oos = job.runs.get(sample="out")
         self.assertEqual((oos.status, oos.start_date), ("completed", job.split_date))
+        self.assertEqual(oos.owner_id, self.user.id)  # queued by the worker, still owned by the job's owner
         self.assertLess(job.runs.get(id=first.id).end_date, job.split_date)  # train never overlaps test
         self.assertEqual(jobs.optimization_status(job), "partially_completed")
         detail = self.api.get(f"/api/optimizations/{job.id}/").json()
@@ -354,19 +362,26 @@ class JobAndApiTests(TestCase):
         while jobs.work_one("w"):
             pass
         from backtester.views import OptimizationJobListCreateView
-        job = OptimizationJobListCreateView.queryset.all()[0]
+        view = OptimizationJobListCreateView()
+        view.request = mock.Mock(user=self.user)
+        job = view.get_queryset()[0]
         for run in job.runs.all():
             self.assertIn("equity_curve", run.get_deferred_fields())
         listed = self.api.get("/api/optimizations/").json()["results"][0]
         self.assertEqual(listed["status"], "completed")
 
-    def test_spoofed_forwarded_for_does_not_bypass_throttle(self):
-        rf = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
-        with self.settings(REST_FRAMEWORK=rf):
-            codes = [self.api.post("/api/runs/", self.body(), format="json",
-                                   HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7").status_code
-                     for i in range(11)]
-        self.assertEqual(codes[-1], 429)  # jobs scope is 10/min; a fresh fake IP per request doesn't help
+    def test_job_throttle_is_per_user(self):
+        # Verified quota is 10 active jobs and the jobs throttle is 10/min: the 11th request is refused.
+        responses = [self.api.post("/api/runs/", self.body(), format="json") for _ in range(11)]
+        self.assertEqual([r.status_code for r in responses[:10]], [201] * 10)
+        self.assertEqual(responses[-1].status_code, 429)
+        self.assertIn("throttled", responses[-1].json()["detail"])  # throttle runs before the quota check
+
+    def test_anonymous_requests_are_rejected(self):
+        anon = APIClient()
+        for url in ("/api/runs/", "/api/strategies/", "/api/optimizations/", "/api/dashboard/"):
+            self.assertEqual(anon.get(url).status_code, 403, url)
+        self.assertEqual(anon.get("/health/ready").status_code, 200)
 
     def test_health(self):
         self.assertEqual(self.api.get("/health/live").status_code, 200)

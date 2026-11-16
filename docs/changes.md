@@ -34,3 +34,47 @@ What changed in each phase, at a level useful for review and release notes. Deci
 - **One-time downloads:** every existing symbol is downloaded once on its first run after deploy, which also converts old mixed-scale data.
 - **Migration:** `0012` only adds a table, so it's safe on a live database.
 - **Engine:** `ENGINE_VERSION` unchanged (2.0.0). Past results are unaffected.
+
+## Phase 1 · Accounts and personal workspace · branch `phase-1-accounts` · 2026-11-16
+
+### Behavior changes
+| Area | Before | After | Decision |
+|---|---|---|---|
+| Access | Anyone could use every endpoint anonymously | Every `/api/*` endpoint except `/api/auth/*` requires sign-in (403 otherwise). `/health/*` stays public | D-016 |
+| Data visibility | All runs, optimizations and strategies were visible to everyone | Only your own, plus built-in strategies. Another user's id returns 404. You can't use another user's strategy | D-020 |
+| Limits | Per-IP throttles only | Per-tier quotas (429 naming the limit), job/read/write throttles per user, per-IP throttles on auth and guest creation | D-021 |
+| Idempotency keys | Global: a matching key from another user returned *their* job | Per user (`UNIQUE(owner, idempotency_key)`) | D-020, D-025 |
+| API origin | The SPA called the Render host directly over CORS | The SPA calls the relative `/api`, forwarded by Vercel, Vite or nginx. CORS removed | D-016, D-027 |
+| Home page | Strategy list | Dashboard: quota usage, running jobs, recent backtests with return vs. buy & hold, recent optimizations with their out-of-sample result, strategies | D-022 |
+
+### New API
+`/api/auth/`: `csrf`, `me`, `signup`, `login`, `logout`, `guest`, `guest/convert`, `verify-email`, `verify-email/resend`, `password-reset`, `password-reset/confirm`, `password-change`, `email-change`, `delete-account`. Plus `/api/dashboard/`.
+
+### New UI routes
+`/login`, `/signup`, `/forgot-password`, `/reset-password`, `/verify-email`, `/account`, `/` (dashboard). The strategy list moved to `/strategies`. Banners appear for guests and unverified users. The nav shows the signed-in user and a sign-out button.
+
+### Database
+| Migration | What | Reversible |
+|---|---|---|
+| `accounts.0001_initial` | `accounts_user` table | yes |
+| `backtester.0013_owner_fields` | nullable `owner` on strategy, run and optimization; idempotency keys no longer globally unique | yes |
+| `backtester.0014_assign_legacy_owner` | gives existing rows to an inactive legacy user (only if there are any) | yes (no-op reverse; the legacy user remains) |
+| `backtester.0015_owner_required` | `owner` required on runs and optimizations; built-in XOR owner check on strategies; `UNIQUE(owner, idempotency_key)`; indexes on `(owner, -created_at)` | yes |
+| `sessions.0001_initial` | Django sessions table | yes |
+
+### Files
+- **New** `backend/accounts/`: `models.py` (User, manager, guests), `views.py` (auth API), `serializers.py`, `tokens.py`, `emails.py`, `quotas.py`, `housekeeping.py`, `urls.py`, `tests.py` (31 tests), migration `0001`
+- `backend/backtester/`: `models.py` (owners, constraints, indexes), `views.py` (per-user querysets, quotas, user-row lock, `DashboardView`), `serializers.py` (strategy field limited to visible strategies), `jobs.py` (out-of-sample run inherits owner, hourly housekeeping), `urls.py`, `tests.py`, migrations `0013`–`0015`
+- `backend/vault_core/`: `settings.py` (sessions, CSRF, user model, password rules, email, quotas, throttles; CORS removed), `urls.py`
+- `backend/requirements.txt`: removed `django-cors-headers`
+- **New** `frontend/src/auth.jsx`, `frontend/src/pages/{Auth,Account,Dashboard}.jsx`, `frontend/nginx.conf`
+- `frontend/src/{App.jsx,api.js,App.css}`, `frontend/vite.config.js` (dev proxy), `frontend/vercel.json` (API rewrite), `frontend/Dockerfile` (nginx), `docker-compose.yml`
+- `README.md`, `CLAUDE.md`, `docs/*`
+
+### Operational notes for release
+- **New env vars (API and worker):** `CSRF_TRUSTED_ORIGINS` (the Vercel origin), `FRONTEND_URL`, `EMAIL_HOST`/`EMAIL_PORT`/`EMAIL_HOST_USER`/`EMAIL_HOST_PASSWORD`/`DEFAULT_FROM_EMAIL`, optional `QUOTA_*`, `THROTTLE_AUTH`, `THROTTLE_GUEST`, `GUEST_TTL_DAYS`.
+- **Removed env var:** `CORS_ALLOWED_ORIGINS`. **Vercel:** remove `VITE_API_URL`.
+- **`frontend/vercel.json`:** replace `VAULT_API_HOST` with the Render API host.
+- **`NUM_PROXIES`:** check on staging (Vercel and then Render).
+- **Migrations:** rehearsed from the actual Phase 0 code on Postgres: upgrade 1,189 ms, rollback 1,091 ms (see evals).
+- Existing anonymous runs disappear from the UI (they're owned by the legacy user).

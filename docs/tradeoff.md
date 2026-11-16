@@ -56,3 +56,50 @@ Alternative not taken: storing unadjusted prices plus corporate actions and adju
 | Gained | Gave up |
 |---|---|
 | A lighter local setup (WSL), no Docker Desktop | Local and production environments differ more (WSL vs. container image), until the Render decision is made |
+
+## Phase 1
+
+### D-016 · Same-origin proxy with session cookies (vs JWT)
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| The login cookie is `HttpOnly`, so XSS can't steal it | **Every API call goes through Vercel first**, adding latency. Measured locally through the Vite proxy: dashboard p50 24.5 ms, `/auth/me` p50 14.7 ms. Production adds a Vercel round trip | A mobile app or third-party API clients appear (they need tokens), or proxy latency matters |
+| No CORS, no token refresh logic, Django's well-tested sessions and CSRF | **Frontend and API deployment are coupled** through the rewrite host (D-029) | Separate staging and production frontends |
+| — | `NUM_PROXIES` changes because Vercel is an extra proxy, so it has to be checked on staging | Staging setup |
+| — | Database-backed sessions mean one session lookup per request | Hundreds of requests per second: switch to cached sessions |
+
+### D-015 · Custom user model
+| Gained | Gave up |
+|---|---|
+| Email login, `tier`, guest and system flags, room to add fields | The unused `auth_user` table stays in existing databases (harmless; the rehearsal confirmed it doesn't conflict) |
+
+### D-018 · Guests
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Try the app with zero sign-up; guests can save their workspace | Throwaway accounts can be created in bulk. Mitigated by 5 per hour per IP, small quotas and 7-day deletion | Abuse shows up → add CAPTCHA or proof-of-work on guest creation |
+
+### D-019 · Legacy owner
+| Gained | Gave up |
+|---|---|
+| Nothing lost, nothing leaked | Old anonymous runs disappear from the UI for everyone. An admin can still reach them in the database |
+| — | Rolling back to Phase 0 leaves the legacy account in `accounts_user` (the data step has no reverse). Harmless: Phase 0 doesn't read that table |
+
+### D-020 · 404 rather than 403 for other users' items
+| Gained | Gave up |
+|---|---|
+| The API doesn't reveal whether an id exists | Slightly harder debugging ("is it missing or not mine?"). Server logs still show the request |
+
+### D-021 / D-025 · Quotas with a lock on the user's row
+| Gained | Gave up |
+|---|---|
+| Exact per-user limits, with no races | Each create takes a short lock on the user's row: one user's simultaneous creates run one after another (others are unaffected). On SQLite `select_for_update` does nothing, which is fine for development |
+| Limits are adjustable per environment | Two more queries per create (quota usage) |
+
+### D-030 · MD5 hasher in tests
+| Gained | Gave up |
+|---|---|
+| Account tests measure our logic, not 210 ms hashes | The unit tests don't exercise the real hasher. The end-to-end smoke test does (sign-up about 320 ms with PBKDF2) |
+
+### D-032 · No frontend unit tests yet
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| The highest-risk part (cookies, CSRF, proxy) is proven end to end | UI edge cases (form errors, the guest banner, redirects) are only covered by lint, build and manual checks | **Phase 2**: the builder UI needs component tests |
