@@ -729,3 +729,26 @@ Phase 6 checklist.
 - **The honesty is structural:** the held-out test, the "N candidates tried" count and the process checks are produced by
   code in every report, so they don't depend on the model behaving well.
 - **What's unknown is quality, not safety:** a bad model can waste a run's budget, not break anything or overclaim.
+
+## Phase 5 · First live research run (local, gpt-oss-120b, 2026-11-17)
+Run by the user on the local stack: AAPL, 2015-01-01 to 2023-06-21 (research to 2020-12-04, held out 2020-12-05 to
+2023-06-21), objective Sharpe, max drawdown 30%. One run: an observation, not an evaluation.
+
+| | Result |
+|---|---|
+| Completed | ✅ no crash or stuck state; 9 model calls, 33,188 tokens (18,636 in / 14,552 out), 19 backtests |
+| Decisions | 4 × `test` (19 candidates), then 3 rejected answers in a row → Vault chose the best eligible (c3, MACD histogram over zero) |
+| Held-out result | **+33.6% vs buy & hold +52.7%: did not beat buy & hold** (research period: +268.9% vs +381.9%); Sharpe 0.73; max drawdown 18.8% (within 30%) |
+| Checks | held out tested once ✓, never seen by the agent ✓, budgets ✓, drawdown ✓; summary ✗ (a false alarm, below) |
+| Step latency | 4.4 s, 3.6 s, 9.8 s, 16.2 s, 16.7 s, 25.2 s, 27.5 s (growing with the candidate table and output) |
+
+| Found | Evidence | Fix (D-096) |
+|---|---|---|
+| The number check rejected true values quoted to 4 decimals | all 10 "ungrounded" numbers were real facts (e.g. Sharpe 1.290688 as "1.2907") | precision up to 4 decimals; test with the live values |
+| Answers hit the output cap | 4 of 7 answers exactly 2,000 output tokens; rejected answers had malformed specs | 4,000 tokens and low reasoning effort for agent steps |
+| The agent never left explore | 4 test rounds of new families, no search, no choice | explore capped at 2 rounds, then refine |
+| Duplicate behaviour | c3 and c11 identical results (equivalent MACD rules) | twins flagged to the agent and in the UI |
+
+**The honest part worked as designed:** the strategy that looked best in research lost to buy & hold on the years it
+hadn't seen, and the report led with that. After the fixes: backend 209/209 (Postgres), 208 + 1 skipped (SQLite);
+frontend 31/31. A second live run, to confirm the fixes, needs the next day's free tokens.

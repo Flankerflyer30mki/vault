@@ -112,6 +112,25 @@ describe("ResearchDetail", () => {
     expect((await screen.findByText("Saved: open")).getAttribute("href")).toBe("/strategies/77/edit");
   });
 
+  it("shows a replaced summary as a warning, not a broken rule, and flags twin candidates", () => {
+    const report = {
+      chosen: { id: "c1", name: "SMA 5/20 cross", rules: CANDIDATE.rules, chosen_by: "code" }, candidates_tested: 2,
+      research_period: "a", held_out_period: "b",
+      research_result: { total_return: 0.42, buy_and_hold_return: 0.3, sharpe_ratio: 0.91, max_drawdown: 0.18, trade_count: 14 },
+      held_out_result: null, beat_buy_and_hold_held_out: null,
+      text: { summary: "Plain summary.", why: "", caveats: [] },
+      checks: { held_out_tested_once: true, summary_numbers_grounded: false },
+    };
+    const twin = { ...CANDIDATE, id: "c2", name: "MACD twin", run_id: 42, same_as: "c1" };
+    usePoll.mockReturnValue({
+      data: { ...BASE, status: "completed", stage: "done", report, steps: [], candidates: [CANDIDATE, twin] }, error: "",
+    });
+    renderAt("/research/3");
+    expect(screen.getByText(/⚠ The agent's summary didn't pass the number check/)).toBeTruthy();
+    expect(screen.queryByText(/✗ Every number/)).toBeNull();
+    expect(screen.getByText("(same results as c1)")).toBeTruthy();
+  });
+
   it("shows why a run failed", () => {
     usePoll.mockReturnValue({
       data: { ...BASE, status: "failed", error_message: "Stopped: step budget used up, and no candidate met the requirements.", steps: [], candidates: [] },
