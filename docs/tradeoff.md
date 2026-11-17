@@ -294,3 +294,39 @@ Status: done in Phase 2 (D-039); see below.
 | Gained | Gave up |
 |---|---|
 | Only the description leaves Vault; never logged; deleted after 30 days | Support can't look at a description older than 30 days |
+
+## Phase 5
+
+### D-089 · Fixed stages with JSON actions
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Bounded, testable behaviour: code owns stage changes, budgets, the held-out test and saving | Less freedom than an open tool loop (no "look at trades", no new tools mid-run) | Real runs show the agent needs more tools |
+| The JSON format already proven on this model (140/140 in Phase 4); provider-independent | Not the provider's native tool calling (a common interview topic) | A provider's tool calling is measured to be as reliable |
+| Flat prompt size per step (state rebuilt each time) | The agent has no memory of its earlier reasoning, only of results and its last error | Decisions look repetitive in live runs → keep a short running summary |
+
+### D-090 · Resumable state machine
+| Gained | Gave up |
+|---|---|
+| No worker is held while backtests run; restarts and deploys resume from saved state | More moving parts than a loop in one process: waking, stale recovery, ownership checks (all tested) |
+| Every step is in the timeline the user sees | A step's latency includes the queue: a few seconds between decisions |
+
+### D-091 · Held-out test by code
+| Gained | Gave up |
+|---|---|
+| The honest number is computed where the agent can't influence it, exactly once | Research uses only 70% of the data; the held-out 30% is one period, so it's a sample, not proof |
+| Reports show how optimistic the research number is | A held-out loss looks bad, and is shown anyway |
+
+### D-092 · Grounded report
+| Gained | Gave up |
+|---|---|
+| The summary can't invent a figure; tables and checks come from code | A correct but differently rounded number may be rejected (one rewrite allowed, then a plain summary) |
+
+### D-093 · Budgets and quotas
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| A run costs at most ~40K tokens and 40 backtests; the deployment's free tokens can't be drained by one user | A handful of research runs per day on the free tier; guests can't use it | A paid tier with a spending cap |
+
+### D-094 · No live evaluation
+| Gained | Gave up |
+|---|---|
+| The revamp finishes today | No measured answer to "does the agent beat a random search?" and no live run yet; stated plainly in the README and evals |

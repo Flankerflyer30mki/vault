@@ -95,6 +95,14 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-085 | 4 | Default model `openai/gpt-oss-120b`, chosen by the evaluation (60/60 vs 57/60 for gpt-oss-20b) | Accepted |
 | D-086 | 4 | Ablation cut to what fits the free tier; the full ablation is deferred | Deferred |
 | D-087 | 4 | The validator rejects a condition whose two sides are identical (found by the evaluation) | Accepted |
+| D-088 | 5 | Research agent: a goal on one symbol → candidates proposed, backtested, refined; the user saves what they want | Accepted |
+| D-089 | 5 | Fixed stages (explore → refine → choose); the agent picks actions as checked JSON, not vendor tool-calling | Accepted |
+| D-090 | 5 | The agent is a resumable state machine on the job queue: it waits for its backtests without holding a worker | Accepted |
+| D-091 | 5 | The last 30% is held out: never shown to the agent, tested once by our code, reported next to buy & hold | Accepted |
+| D-092 | 5 | The agent writes the summary; every number in it must come from the results, else a plain summary is used | Accepted |
+| D-093 | 5 | Budgets per run (8 decisions, 14 model calls, 40 backtests, 40K tokens); quotas 0/1/3 per day; shared AI budget | Accepted |
+| D-094 | 5 | No live evaluation in Phase 5; quality vs baselines deferred; first live run on the Phase 6 checklist | Deferred |
+| D-095 | 5 | Research runs use a hidden built-in strategy and a `research` experiment kind; schema and data migrations split | Accepted |
 
 ---
 
@@ -713,3 +721,78 @@ Phase 5 reuses.
 - **Decision:** reject a condition whose two normalised sides are equal: "compares something with itself: the two sides
   must differ". Same indicator with different outputs (Bollinger upper vs lower) is still allowed.
 - **Result:** the repair loop turned the model's answer into the 50/200 cross; the evaluation went from 59/60 to 60/60.
+
+---
+
+# Phase 5 · AI research agent (approved 2026-11-17)
+
+Starting point: the Phase 4 assistant turns one sentence into one strategy for the user to review. Phase 5 lets an
+agent do the research loop itself (propose, backtest, read results, refine, choose) within hard limits, with the
+honesty problem of any search ("try enough strategies and one looks great by luck") designed in from the start.
+Constraint agreed with the user: finish today, so no live evaluation runs (D-094).
+
+## D-088 · Scope
+- **Decision:** the user gives a goal, a symbol, a period, an objective (Sharpe, Calmar or total return) and optionally a
+  maximum drawdown. The agent proposes builder strategies, backtests them, refines the promising ones and chooses one.
+  It may queue backtests on its own (inside quotas and budgets); it can't save strategies, change costs, stops or the
+  symbol, or reach anything outside Vault. The user saves any candidate with one click. One symbol per run; builder
+  strategies only.
+- **Why:** an agent that acts on its own (it spends backtests) but whose output is decided on by a person.
+
+## D-089 · Fixed stages, JSON actions
+- **Options:** (A) a fixed pipeline with the model at set points; (B) a free tool-calling loop; (C) the model chooses
+  actions inside stages that code controls.
+- **Decision:** C. Stages: explore (`test`, `next_stage`) → refine (`test`, `search`, `choose`) → validate and report
+  (code only). The agent answers each step with one JSON action, checked by `agent.check` (allowed in this stage, specs
+  through `spec.validate`, no repeats, within budget, chosen candidate eligible). A rejected action goes back with
+  path-keyed errors. Each step's prompt is rebuilt from the run's state (goal, budgets, a table of tested candidates), so
+  the context doesn't grow with the number of steps.
+- **Why JSON actions rather than the provider's tool-calling API:** the same JSON mode produced 140/140 valid answers on
+  this model in Phase 4, tool calling on Groq was never measured, and plain JSON keeps the agent provider-independent.
+
+## D-090 · A resumable state machine on the job queue
+- **Context:** an agent that queues 20 backtests and then waits would hold the worker those backtests need; with one
+  worker it would wait for ever.
+- **Decision:** `ResearchRun` is a job like a run. Each claim is one short step (one model call, or code work). After
+  queueing a round it goes to `waiting`; when the round's last backtest finishes, the worker re-queues it
+  (`on_backtest_finished`, plus a sweep). Steps' writes are atomic and ownership-checked; a step that crashed is
+  re-queued by stale recovery, and a step re-queued while its round is unfinished goes back to waiting instead of
+  asking the agent about unfinished results (a bug the tests found). Graceful shutdown re-queues without using an
+  attempt.
+
+## D-091 · Held-out period, tested once by code
+- **Decision:** the last 30% of the period (`OOS_FRACTION`) is held out. Every candidate backtest ends the day before it;
+  the agent's prompts never contain the held-out dates (checked on every step). After the choice, code runs the chosen
+  candidate once on the held-out period. The report shows the research and held-out results side by side, buy & hold
+  over each, how many candidates were tried, and process checks: held-out tested exactly once, agent never saw it,
+  budgets respected, summary grounded, drawdown constraint on the held-out period.
+- **Why:** an agent that searches is a data-snooping machine; the held-out result is the honest number, and showing how
+  many strategies were tried says how optimistic the research number is.
+
+## D-092 · Grounded report
+- **Decision:** the agent writes the summary from a JSON of facts. Every number in its text must appear in those facts
+  (as given, rounded, or as a percentage); otherwise it gets one chance to rewrite, then a plain code-written summary is
+  used and the check is marked failed. The tables and checks are always rendered by code, never by the model.
+
+## D-093 · Budgets and quotas
+- **Decision:** per research run: 8 decisions, 14 model calls (including rejected answers and the report), 40 backtests,
+  40,000 tokens; up to 6 candidates per round and 6 values per search; a candidate needs ≥ 3 round trips to be eligible.
+  When a budget runs out, code chooses the best eligible candidate. Research tokens count against the same daily AI
+  budget as the assistant. Research runs per 24 h: guest 0, unverified 1, verified 3; one at a time; one counts as one
+  active job; its backtests are part of the run, not of the backtest or experiment quotas. At least 730 days per run.
+
+## D-094 · No live evaluation in Phase 5
+- **Context:** the user wants the revamp finished today; the free tier's daily tokens were already spent on Phase 4's
+  evaluation.
+- **Decision:** ship with tests only: a scripted fake model drives complete runs (real backtests, waiting and resuming,
+  held-out test, report), plus checks of every rejection path, budgets, crashes, shutdown and grounding. The quality
+  question (does the agent beat buy & hold, the best template and a random search with the same budget on held-out data?)
+  is deferred. A first live run is on the Phase 6 checklist. The docs say Phase 5 has not been run against a real model.
+
+## D-095 · Placeholder strategy and the `research` kind
+- **Decision:** `BacktestRun.strategy` is required, so research backtests point at a hidden built-in strategy
+  ("AI research candidate", `is_hidden`), each with its own frozen spec, as optimization children do. Hidden strategies
+  never appear in lists and can't be run by users. Research rounds are Experiments of kind `research`, excluded from
+  experiment lists, the dashboard and the experiments quota. The migration is split (0022 schema, 0023 data): on
+  Postgres, rolling back a data change and an `ALTER TABLE` in one transaction fails with "pending trigger events" (found
+  by the legacy-migration test).
