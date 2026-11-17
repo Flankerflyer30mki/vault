@@ -77,6 +77,7 @@ class ResearchCandidateSerializer(serializers.Serializer):
     metrics = serializers.DictField(allow_null=True)
     eligible = serializers.BooleanField()
     error = serializers.CharField(allow_blank=True)
+    same_as = serializers.CharField(allow_null=True)
 
 
 class ResearchRunSerializer(serializers.ModelSerializer):

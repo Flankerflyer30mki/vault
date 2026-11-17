@@ -253,7 +253,7 @@ You see each decision and its reason in a live timeline, can open any candidate'
 | Research runs per 24 h | guest 0 / unverified 1 / verified 3; one at a time | `QUOTA_<TIER>_RESEARCH_PER_DAY`; counts as one active job; its backtests aren't counted as yours |
 | Period | at least 730 days | `RESEARCH_MIN_DAYS` |
 
-Research tokens share the daily AI budget with the assistant. **Status: tested with a scripted model and real backtests, not yet run against a real model or measured for quality** (whether its picks beat buy & hold, the best template or a random search on held-out data). See [docs/evals.md](docs/evals.md#phase-5--ai-research-agent).
+Research tokens share the daily AI budget with the assistant. **Status:** tested with a scripted model and real backtests, plus **one live run** with gpt-oss-120b (AAPL): it completed, and reported honestly that its pick lost to buy & hold on the held-out years. That run also exposed four problems, fixed in D-096: a too-strict number check, answers cut off at the output limit, never leaving exploration, and duplicate strategies. Quality (whether its picks beat buy & hold, the best template or a random search on held-out data) **is not measured**. See [docs/evals.md](docs/evals.md#phase-5--first-live-research-run-local-gpt-oss-120b-2026-11-17).
 
 ## Accounts and workspaces
 
@@ -487,6 +487,6 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built (D-061).
 - Worker caches are per process: several workers each warm their own. An experiment's limit stays 25 child runs: a 25-child batch takes about 3 s on one worker, so the limit is about result readability, not capacity.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
-- The research agent hasn't been run against a real model yet, and its quality (vs buy & hold, the best template and a random search on held-out data) hasn't been measured. One symbol per run; its held-out test is a single period.
+- The research agent has had one live run so far, and its fixes (D-096) are tested but not yet confirmed live. Its quality (vs buy & hold, the best template and a random search on held-out data) hasn't been measured. One symbol per run; its held-out test is a single period.
 - AI answers can be wrong in ways the validator can't see (a valid strategy that isn't what you meant), which is why the AI only fills the form for you to review. The provider's free limits are shared by the whole deployment, and providers retire models; switching `AI_MODEL` needs a new evaluation run.
 - Capacity numbers come from a local machine with Render-like container limits, not from Render itself; repeat the load test on staging.

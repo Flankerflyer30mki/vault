@@ -103,6 +103,7 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-093 | 5 | Budgets per run (8 decisions, 14 model calls, 40 backtests, 40K tokens); quotas 0/1/3 per day; shared AI budget | Accepted |
 | D-094 | 5 | No live evaluation in Phase 5; quality vs baselines deferred; first live run on the Phase 6 checklist | Deferred |
 | D-095 | 5 | Research runs use a hidden built-in strategy and a `research` experiment kind; schema and data migrations split | Accepted |
+| D-096 | 5 | Fixes from the first live research run: grounding precision, agent output room, explore cap, twin candidates | Accepted |
 
 ---
 
@@ -796,3 +797,18 @@ Constraint agreed with the user: finish today, so no live evaluation runs (D-094
   experiment lists, the dashboard and the experiments quota. The migration is split (0022 schema, 0023 data): on
   Postgres, rolling back a data change and an `ALTER TABLE` in one transaction fails with "pending trigger events" (found
   by the legacy-migration test).
+
+## D-096 · Fixes from the first live research run
+- **Context:** the user ran the agent locally against gpt-oss-120b (AAPL, 2015-01-01 to 2023-06-21, Sharpe, max drawdown
+  30%). It finished honestly (19 candidates; the pick did not beat buy & hold on the held-out years, and the report said
+  so) but showed four problems the scripted tests couldn't: (1) the summary was rejected for quoting real values to four
+  decimals ("1.2907"); (2) 4 of 7 agent answers used exactly the 2,000-token output cap, and steps slowed from 4 s to 27 s;
+  (3) the agent explored for all 4 of its decisions and never refined; (4) two candidates were different rules with
+  identical trades (MACD histogram over zero vs line over signal). The UI also showed the replaced summary as a failed
+  rule (red ✗).
+- **Decision:** (1) the number check accepts a fact's value rounded to up to 4 decimals (and as a percentage);
+  (2) agent steps get `RESEARCH_MAX_OUTPUT_TOKENS` 4,000 and `RESEARCH_REASONING_EFFORT` "low";
+  (3) after `RESEARCH_MAX_EXPLORE_ROUNDS` (2) explore rounds the run moves to refine by itself (logged as a system step);
+  (4) a candidate whose results equal an earlier one's is marked "same results as cN" for the agent and in the UI; the
+  replaced summary is shown as a warning, not a ✗.
+- **Not yet re-verified live:** the day's free tokens were used by that run; the next live run should confirm (2) and (3).

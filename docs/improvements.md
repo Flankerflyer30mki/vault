@@ -366,3 +366,13 @@ the platform kills it 30 s later.
 |---|---|---|
 | A step re-queued after a crash while its backtests ran asked the agent about unfinished results; the run failed | Such a step goes back to `waiting` without a model call | Crash-and-resume test completes the run *(test)* |
 | A migration that both seeds a row and alters a table couldn't be rolled back on Postgres | Split into schema (`0022`) and data (`0023`) | Postgres suite 205/205 including the migration rollback test |
+
+### 5.6 · What the first live run taught *(D-096)*
+**Why:** a scripted model can't show how a real one behaves; one local run with gpt-oss-120b did.
+| Before (live run) | Change | Result |
+|---|---|---|
+| A correct summary was thrown away: 10 real numbers quoted to 4 decimals were flagged as invented | Number check accepts up to 4 decimals | The live values pass, an altered one ("1.2908") still fails *(test)* |
+| 4 of 7 answers hit the 2,000-token output cap; steps slowed to 27 s; malformed specs rejected | 4,000 tokens and low reasoning effort for agent steps | Agent calls use the research limits *(test)*; to confirm live |
+| The agent explored for all 4 decisions and never refined or chose | Explore capped at 2 rounds, then refine | The run moves on by itself and the agent chooses *(test)*; to confirm live |
+| Two candidates were the same strategy in different words (equal results) | Twins marked "same results as cN" | Shown to the agent and in the UI *(tests)* |
+| A replaced summary showed as a failed rule (red ✗) | Shown as a warning that Vault's plain summary is used | *(frontend test)* |
