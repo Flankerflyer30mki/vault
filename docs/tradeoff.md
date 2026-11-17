@@ -204,3 +204,48 @@ Status: done in Phase 2 (D-039); see below.
 | Gained | Gave up |
 |---|---|
 | ≤ 500 points per child; peaks and troughs kept | Hover values on experiment charts are approximate between kept points; the run's own page has the full curve |
+
+## Phase 3.5
+
+### D-067 / D-068 · Locust, run locally with container limits
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Capacity numbers now, scenarios in Python, CSV straight into evals | A laptop isn't Render: shared CPU made identical repeats differ by up to a third at 20 users | Phase 6 staging: rerun the same locustfile there |
+| No new language or tool in the stack (dev-only dependency) | Locust's own load generator is slower than k6's (irrelevant at ≤ 80 users) | Tests needing thousands of users |
+
+### D-069 · Hand-rolled `/metrics` instead of a client library + Prometheus server
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| No new service; queue health is one SQL query, true across all processes | HTTP metrics are per process: a scrape sees only the process that answered | Several API instances and real dashboards → `prometheus_client` multiprocess mode or OpenTelemetry |
+| Off unless a token is set; constant-time token check | No history or alerting without a scraper | A scraper is attached at deployment |
+
+### D-070 / D-076 · JSON logs, request IDs, one access log
+| Gained | Gave up |
+|---|---|
+| Click → run → worker error is one search; IDs survive into the database | JSON is harder to read by eye locally (`LOG_FORMAT=text` restores it) |
+| Route patterns, not URLs: no IDs or tokens from paths in logs, and low-cardinality metrics | You can't see which run ID a request hit from the access line alone (it's in the route's own logs) |
+| One access line from Django instead of two formats | gunicorn's own access log is off |
+
+### D-071 · Sentry off by default
+| Gained | Gave up |
+|---|---|
+| No external data flow until the user decides | No error tracking in production until it's turned on |
+
+### D-072 / D-076 · OpenAPI with CI enforcement
+| Gained | Gave up |
+|---|---|
+| 32 operations documented; docs can't drift (CI fails on any warning) | Every new view needs `extend_schema` and computed fields need type hints: some boilerplate per endpoint |
+| Bundled Swagger assets, no CDN | Two more dependencies; in production the docs need `API_DOCS=1` and are served by Django |
+
+### D-073 / D-075 · Shared throttle counters in Postgres, written by upsert
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Limits are exact across processes: 10 logins allowed, not 20 (measured) | One database write per throttled request | Request volume where that write matters → Redis (the project removed it on purpose) |
+| Upsert removes the stock cache's per-write `COUNT(*)` and savepoints: 52–55 req/s at saturation vs 31–41 with Django's stock database cache | Expired rows stay until the hourly housekeeping (the table holds about one row per client and scope seen in the last hour) | — |
+| No new service | Same throughput as per-process counters within measurement noise, not better | — |
+
+### D-074 · Graceful shutdown with a grace period
+| Gained | Gave up |
+|---|---|
+| A deploy-interrupted run is back in the queue 2.26 s after `SIGTERM` (2 s grace) instead of 120–150 s; no retry used | Work done before the deadline is thrown away and the run restarts from the first bar |
+| No new failure states: the run simply becomes `queued` again | A run that always takes longer than the grace period and is always interrupted would never finish (only during back-to-back deploys) |

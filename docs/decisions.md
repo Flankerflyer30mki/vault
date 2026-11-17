@@ -74,6 +74,16 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-064 | 3 | Tunable parameters are grouped by indicator instance; a search moves linked paths together | Accepted |
 | D-065 | 3 | The benchmark is an ordinary child run of a built-in "Buy and Hold" strategy on the index | Accepted |
 | D-066 | 3 | Hand-written rename migration; `/api/optimizations/` kept as an alias; quota renamed `experiments_per_day` | Accepted |
+| D-067 | 3.5 | Load testing with Locust (dev-only dependency) | Accepted |
+| D-068 | 3.5 | Load test locally with Render-like resource limits now; repeat on staging in Phase 6 | Accepted |
+| D-069 | 3.5 | Token-protected `/metrics` in Prometheus text format: RED metrics from middleware, queue health from the DB | Accepted |
+| D-070 | 3.5 | JSON log lines with request IDs that link API request → run → worker logs | Accepted |
+| D-071 | 3.5 | Sentry error tracking, off unless `SENTRY_DSN` is set; no personal data sent | Accepted |
+| D-072 | 3.5 | OpenAPI via drf-spectacular; CI fails on schema warnings; docs off in production by default | Accepted |
+| D-073 | 3.5 | Throttle counters in a Postgres database cache shared by all processes (no Redis) | Accepted |
+| D-074 | 3.5 | Graceful worker shutdown on SIGTERM: stop claiming, finish within a grace period or requeue | Accepted |
+| D-075 | 3.5 | Throttle cache writes as one upsert; expired rows removed by housekeeping (found by the load test) | Accepted |
+| D-076 | 3.5 | Every endpoint documented explicitly in the schema; JSON logs replace gunicorn's access log | Accepted |
 
 ---
 
@@ -523,3 +533,80 @@ which was the original question that started the overhaul ("the optimization is 
   `/api/optimizations/` stays as an alias of `/api/experiments/` (limited to optimizations) so the Phase 0–2 tests run
   unchanged against it. The quota key becomes `experiments_per_day` (env `QUOTA_<TIER>_EXPERIMENTS_PER_DAY`); comparisons and
   optimizations share it.
+
+---
+
+# Phase 3.5 · Engineering hardening (approved 2026-11-16)
+
+Starting point: key-value text logs, health checks, and nothing else operational. No metrics, no way to link an API request to
+the worker run it created, rate-limit counters kept per process (so two gunicorn processes double every limit), no API docs,
+no capacity numbers, and a deploy that kills a worker mid-run leaves that run stuck for 120 s until stale recovery.
+
+## D-067 · Locust for load testing
+- **Options:** (A) Locust; (B) k6; (C) a custom script.
+- **Decision:** A, in a new `requirements-dev.txt` so it never ships.
+- **Why:** same language as the backend, scenarios are plain code, CSV output feeds the evals. Its slower load generator doesn't
+  matter at this scale.
+
+## D-068 · Where the load test runs
+- **Decision:** locally now, with the API container limited to Render-like resources and the hardware stated next to every
+  number; repeat on staging in Phase 6. Capacity runs raise rate limits through env vars; the limits have their own tests.
+- **Why:** honest numbers now instead of none until deployment.
+
+## D-069 · Metrics endpoint
+- **Options:** (A) a Prometheus client library plus a Prometheus/Grafana server; (B) `/metrics` in Prometheus text format,
+  computed by Vault, protected by a token; (C) logs only.
+- **Decision:** B. RED metrics (rate, errors, duration by route) come from the request middleware; queue health (depth by
+  priority, oldest queued age, active runs, completions and failures by category in the last hour, run-time percentiles) comes
+  straight from the queue table. Disabled (404) unless `METRICS_TOKEN` is set.
+- **Why:** the queue is Postgres, so its health is a SQL query, valid across all processes. No new infrastructure, and the
+  format is ready for any scraper later.
+
+## D-070 · JSON logs with request IDs
+- **Decision:** every request gets an ID (a valid incoming `X-Request-ID` is kept, anything else replaced), returned in the
+  response and attached to every log line written during it. A run stores the ID of the request that created it, and the worker
+  logs that run's lines with both IDs. One access-log line per request: method, **route pattern** (not the raw URL), status,
+  duration, user ID; no emails. Logs are JSON lines.
+- **Why:** "this user's click → this run → this worker error" becomes one search.
+
+## D-071 · Sentry, off by default
+- **Decision:** the Sentry SDK initialises only when `SENTRY_DSN` is set, with `send_default_pii=False`. Turning it on sends
+  error data to an external service, so that's a deployment decision for the user.
+
+## D-072 · OpenAPI with drf-spectacular
+- **Decision:** `/api/schema/` and `/api/docs/` (Swagger UI from a bundled package, no CDN), on in development and only with
+  `API_DOCS=1` in production. CI runs the schema generator with `--fail-on-warn`, so the docs can't drift from the code.
+
+## D-073 · Throttle counters in Postgres
+- **Options:** (A) Django's database cache in Postgres; (B) Redis; (C) keep them per process.
+- **Decision:** A. The cache table is created by a migration, so deploys need nothing extra.
+- **Why:** correct limits across processes and instances without reintroducing a service the project removed on purpose. The
+  load test measures what it costs per request.
+
+## D-074 · Graceful worker shutdown
+- **Context (corrected while building):** the worker already stopped claiming on `SIGTERM` and finished its current run before
+  exiting. What was missing was a deadline: a run still going when the platform kills the process (Render: 30 s after
+  `SIGTERM`) was left `running` until stale recovery, 120–150 s later, and that attempt counted against `MAX_ATTEMPTS`.
+- **Decision:** on `SIGTERM` (or `SIGINT`) the worker stops claiming new runs. The current run may finish within
+  `WORKER_GRACE_S` (20 s, under Render's 30 s); past that, the progress callback raises and the run goes straight back to
+  the queue without counting an attempt.
+- **Why:** deploys restart workers; a run shouldn't wait two minutes, or burn a retry, because of a deploy.
+
+## Phase 3.5 · Implementation decisions made while building
+
+## D-075 · One-statement throttle-cache writes (found by the load test)
+- **Context:** with Django's stock database cache, the load test showed +13–18 ms at p50 and ~20% less throughput at saturation
+  than per-process counters (later runs: 31–41 req/s at 40–80 users in two runs, against 52–55 with the upsert). Reading `DatabaseCache.set()` explained it: every write runs `SELECT COUNT(*)` over the whole
+  table (to decide whether to cull), a savepoint, a `SELECT` of the key, an `UPDATE`/`INSERT` and the savepoint release, and a
+  rate-limited request writes its counter every time.
+- **Decision:** `vault_core.throttle_cache.UpsertDatabaseCache`: `set()` is a single `INSERT … ON CONFLICT (cache_key) DO
+  UPDATE`; expired rows are deleted by the worker's hourly housekeeping instead of on the request path. Same table and format
+  as Django's cache, so the two are interchangeable.
+- **Why:** keeps the correctness of shared counters (D-073) without paying for culling on every request.
+
+## D-076 · Explicit schema for every endpoint; one access log
+- **Context:** the first schema check found 17 endpoints it couldn't document (all auth views, dashboard, catalog, preview)
+  and 13 untyped fields, so generated docs would have silently left them out. The docs page also needed template and static
+  configuration that an API-only project didn't have.
+- **Decision:** each view declares its request and response with `extend_schema`; computed fields have type hints; enum
+  names are fixed; CI fails on any warning. gunicorn's access log is turned off because the JSON access line replaces it.

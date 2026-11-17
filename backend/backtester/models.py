@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 
+from vault_core.observability import current_request_id
+
 PCT = dict(max_digits=10, decimal_places=6)
 FEE = dict(max_digits=12, decimal_places=9)  # India's statutory charges need 9 places (0.001186226)
 COST_MODEL_CHOICES = [("flat", "flat"), ("india_delivery", "india_delivery")]
@@ -92,6 +94,7 @@ class Experiment(models.Model):
     # "skipped": [{"params": {...}, "reason": "..."}]}
     config = models.JSONField(default=dict, blank=True)
     idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    request_id = models.CharField(max_length=64, blank=True, default=current_request_id)  # the request that created it
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -117,6 +120,9 @@ class BacktestRun(models.Model):
     sample = models.CharField(max_length=10, choices=SAMPLE_CHOICES, default="full")
     priority = models.PositiveSmallIntegerField(default=INTERACTIVE)
     grid_params = models.JSONField(null=True, blank=True)  # optimization child: the values this run tried
+    # The API request that created this run (D-070); the worker logs the run under the same ID. Runs the worker itself
+    # creates (an optimization's out-of-sample run) inherit the ID of the run being processed.
+    request_id = models.CharField(max_length=64, blank=True, default=current_request_id)
     symbol = models.CharField(max_length=20)
     start_date = models.DateField()
     end_date = models.DateField()

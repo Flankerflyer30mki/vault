@@ -5,6 +5,7 @@ from decimal import Decimal
 from itertools import product
 
 from django.conf import settings
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from accounts.quotas import visible_strategies_q
@@ -22,6 +23,18 @@ def pct(lo, hi, places=6, **kw):
     return serializers.DecimalField(max_digits=places + 4, decimal_places=places, min_value=D(lo), max_value=D(hi), **kw)
 
 
+class TunableParamSerializer(serializers.Serializer):
+    """Schema-only: one parameter an optimization can search (spec.tunable_params)."""
+    label = serializers.CharField()
+    indicator = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.ChoiceField(choices=["int", "float"])
+    min = serializers.FloatField()
+    max = serializers.FloatField()
+    value = serializers.FloatField()
+    paths = serializers.ListField(child=serializers.CharField())
+
+
 class StrategySerializer(serializers.ModelSerializer):
     kind = serializers.ChoiceField(choices=Strategy.KIND_CHOICES, default=Strategy.CODE)
     code = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
@@ -37,14 +50,15 @@ class StrategySerializer(serializers.ModelSerializer):
 
     tunable_params = serializers.SerializerMethodField()
 
+    @extend_schema_field(TunableParamSerializer(many=True))
     def get_tunable_params(self, s):
         """What an optimization can vary (grouped by indicator instance). Empty for code strategies."""
         return spec.tunable_params(s.spec) if s.kind == Strategy.BUILDER and s.spec else []
 
-    def get_python(self, s):
+    def get_python(self, s) -> str | None:
         return spec.render_python(s.spec) if s.kind == Strategy.BUILDER and s.spec else None
 
-    def get_warmup_bars(self, s):
+    def get_warmup_bars(self, s) -> int | None:
         return spec.warmup_bars(s.spec) if s.kind == Strategy.BUILDER and s.spec else None
 
     def validate_code(self, code):
@@ -153,7 +167,7 @@ def _clean_symbol(s):
 class CurrencyMixin(serializers.Serializer):
     currency = serializers.SerializerMethodField()
 
-    def get_currency(self, obj):
+    def get_currency(self, obj) -> str | None:
         return costs.currency(obj.symbol)
 
 
@@ -181,6 +195,7 @@ class BacktestRunSerializer(_RangeMixin, CurrencyMixin, serializers.ModelSeriali
             "bars_total", "bars_processed", "execution_time_ms", "strategy_hash", "engine_version", "data_manifest",
             "final_value", "total_commission", "total_slippage", "cost_drag", "cagr", "sharpe_ratio", "sortino_ratio",
             "calmar_ratio", "max_drawdown", "win_rate", "exposure", "trade_count", "buy_and_hold_return",
+            "request_id",
         ]
         read_only_fields = [f for f in fields if f not in {
             "strategy", "symbol", "start_date", "end_date", "starting_cash", "max_position_pct", "cost_model",
@@ -197,7 +212,7 @@ class BacktestRunSerializer(_RangeMixin, CurrencyMixin, serializers.ModelSeriali
             raise serializers.ValidationError({"stop_loss_pct": "stop_loss_pct must be greater than slippage_pct"})
         return data
 
-    def get_cost_drag(self, run):
+    def get_cost_drag(self, run) -> float | None:
         """Commission plus slippage as a share of starting cash: how much return the costs ate."""
         if run.total_commission is None or not run.starting_cash:
             return None
@@ -218,6 +233,7 @@ class ExperimentRunSerializer(BacktestRunSerializer):
         fields = BacktestRunSerializer.Meta.fields + ["curve"]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.ListField(child=serializers.ListField(), help_text="[[date, equity], ...]"))
     def get_curve(self, run):
         c = run.equity_curve or []
         if c and not isinstance(c[0], list):  # legacy v1 runs stored bare floats
@@ -235,16 +251,17 @@ class ExperimentSerializer(serializers.ModelSerializer):
         model = Experiment
         fields = ["id", "kind", "strategy", "strategy_name", "symbol", "currency", "start_date", "end_date",
                   "split_date", "starting_cash", "cost_model", "stop_loss_options", "take_profit_options", "config",
-                  "status", "created_at"]
+                  "status", "request_id", "created_at"]
         read_only_fields = fields
 
-    def get_strategy_name(self, job):
+    def get_strategy_name(self, job) -> str | None:
         return job.strategy.name if job.strategy_id else None
 
-    def get_currency(self, job):
+    def get_currency(self, job) -> str | None:
         found = {costs.currency(s) for s in ([job.symbol] if job.symbol else job.config.get("symbols", []))}
         return found.pop() if len(found) == 1 else None  # mixed or unknown: no single currency to show
 
+    @extend_schema_field(serializers.ChoiceField(choices=["running", "completed", "partially_completed", "failed"]))
     def get_status(self, job):
         from backtester.jobs import experiment_status
         return experiment_status(job)
