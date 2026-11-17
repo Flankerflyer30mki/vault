@@ -36,7 +36,12 @@ export function errorText(err, fallback = "Request failed") {
   if (res.status === 429) return res.data?.detail && !/throttled/i.test(res.data.detail)
     ? res.data.detail // a quota message says which limit was hit
     : "Too many requests. Wait a moment and try again.";
-  if (res.status >= 500) return res.data?.detail || "The server is unavailable. Try again shortly.";
+  if (res.status >= 500) {
+    // The request ID ties this error to the server's log lines for the same request (D-070).
+    const id = res.headers?.["x-request-id"];
+    const msg = res.data?.detail || "The server is unavailable. Try again shortly.";
+    return id ? `${msg} (request ID: ${id})` : msg;
+  }
   const d = res.data;
   if (d && typeof d === "object") {
     if (d.detail) return d.detail;

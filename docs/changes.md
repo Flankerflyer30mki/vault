@@ -167,3 +167,45 @@ New `/compare` (strategy checkboxes, symbols with suggestion chips, live cell co
 - **Renamed env var:** `QUOTA_<TIER>_OPTIMIZATIONS_PER_DAY` → `QUOTA_<TIER>_EXPERIMENTS_PER_DAY` (only if overridden). New optional: `MAX_GRID_PARAMS`, `MAX_COMPARE_STRATEGIES`, `MAX_COMPARE_SYMBOLS`.
 - **Migrations:** rehearsed on Postgres with 500 runs and 20 optimizations: upgrade 221 ms, rollback 313 ms, re-upgrade 215 ms, 13/13 checks.
 - Comparisons fetch `^NSEI` / `^GSPC` on first use (normal data path).
+
+---
+
+## Phase 3.5 · Engineering hardening · branch `phase-35-hardening` · 2026-11-17
+
+### Behavior changes
+| Area | Before | After | Decision |
+|---|---|---|---|
+| Request tracing | None | `X-Request-ID` on every response (valid incoming IDs kept); stored on runs and experiments; on every log line of the request and of the worker processing its runs | D-070 |
+| Logs | Key-value text, gunicorn access log | JSON lines with `request_id` / `run_id`; one access line per request with the **route pattern**, status, duration, user ID (no emails, no raw URLs); `LOG_FORMAT=text` locally | D-070, D-076 |
+| Metrics | None | `GET /metrics` (Prometheus text), 404 without `METRICS_TOKEN`, Bearer check: HTTP rate/errors/duration by route + queue health from the DB | D-069 |
+| API docs | None | `/api/schema/`, `/api/docs/` (Swagger, bundled assets); on with `DEBUG` or `API_DOCS=1`; CI fails on schema warnings | D-072, D-076 |
+| Error tracking | None | Sentry only if `SENTRY_DSN` is set; `send_default_pii=False` | D-071 |
+| Rate limits | Counted per gunicorn process (2 processes → each limit doubled) | Shared Postgres table `vault_cache`, one upsert per write; expired rows cleaned hourly | D-073, D-075 |
+| Worker shutdown | Finished its run, however long; if the platform killed it, the run sat `running` for 120–150 s and lost an attempt | No claims after `SIGTERM`; past `WORKER_GRACE_S` (20 s) the run is requeued at once, attempt not counted | D-074 |
+| Capacity | Unknown | Locust load test with measured knee; worker throughput, claim latency at depth | D-067, D-068 |
+| UI errors | Server errors showed only the message | 5xx messages add "(request ID: …)" | D-070 |
+
+### API
+- **New:** `GET /metrics` (token-protected), `GET /api/schema/`, `GET /api/docs/` (when docs are on).
+- **Changed:** every response has `X-Request-ID`; runs and experiments gain read-only `request_id`. No other request or response shape changed (the schema annotations describe existing behaviour).
+
+### Database
+| Migration | What | Reversible |
+|---|---|---|
+| `backtester.0020_request_ids` | `request_id` (≤ 64 chars, blank) on `BacktestRun` and `Experiment`; default reads the current request's ID | yes (checked on Postgres: down, up, no drift) |
+| `backtester.0021_cache_table` (hand-written) | creates the `vault_cache` table via `createcachetable` | yes (drops the table) |
+
+### Files
+- **New** `backend/vault_core/observability.py` (context variables, JSON formatter, metrics registry, request middleware, Sentry options), `backend/vault_core/throttle_cache.py` (`UpsertDatabaseCache`), `backend/backtester/ops.py` (queue snapshot and metrics), `backend/backtester/test_ops.py` (21 tests), migrations `0020`, `0021`, `backend/loadtest/locustfile.py`, `backend/requirements-dev.txt`
+- `backend/backtester/`: `jobs.py` (`SHUTDOWN`, requeue past the grace period, request/run IDs while working), `management/commands/run_worker.py` (signal handlers), `models.py` (`request_id`), `serializers.py` and `views.py` (schema annotations, `request_id`)
+- `backend/accounts/`: `views.py` (schema annotations), `serializers.py` (type hints), `housekeeping.py` (expired cache rows)
+- `backend/vault_core/`: `settings.py` (middleware, logging, caches, spectacular, Sentry, `METRICS_TOKEN`, `API_DOCS`, `WORKER_GRACE_S`), `urls.py` (`/metrics`, docs routes); `backend/gunicorn.conf.py` (access log off); `backend/requirements.txt`
+- `frontend/src/api.js` (request ID in 5xx messages) + test; `.github/workflows/ci.yml` (schema check)
+- `README.md`, `CLAUDE.md`, `docs/*`
+
+### Operational notes for release
+- **New env vars (all optional):** `METRICS_TOKEN`, `API_DOCS`, `SENTRY_DSN` (+ `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`), `LOG_FORMAT`, `WORKER_GRACE_S` (keep under the platform's kill window), `THROTTLE_CACHE` (leave unset).
+- **Log format changes to JSON.** Anything that parsed the old text lines needs updating (nothing does today).
+- **New dependencies:** `drf-spectacular`, `drf-spectacular-sidecar`, `sentry-sdk` (+ transitive). `locust` is dev-only.
+- Turning on Sentry sends error data to an external service: a deployment decision.
+- Repeat the load test on staging (D-068) and set `NUM_PROXIES` there as before.

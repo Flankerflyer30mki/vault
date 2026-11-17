@@ -468,3 +468,106 @@ and links and removes Buy and Hold; re-upgrade gives the same experiments.
   more. Together: 25 children in 2.4 s instead of 5.7 s on one worker.
 - **One fan-out/fan-in model** now serves comparisons and optimizations, and Phase 5's agent will submit experiments the same way.
 - **Concurrency is proven, not assumed:** four real workers on Postgres never claimed a run twice.
+
+---
+
+# Phase 3.5 · Engineering hardening
+
+**Environment:** same machine (8 logical CPUs, 7.7 GB RAM shared with Docker Desktop, browser and editor). Load tests: API in its
+own container limited to **0.5 CPU and 512 MB** (like a small Render instance), gunicorn with 2 processes, `DEBUG=0`, Postgres 16
+in another container, Locust in a third. Every load-test number is a **single 30 s step**; identical repeats differed by up to a
+third at 20 users, so read differences under ~30% as noise.
+
+## Phase 3.5 · Checks
+| Check | Result |
+|---|---|
+| Backend suite, Postgres 16 | ✅ 147/147 |
+| Backend suite, SQLite | ✅ 146 passed + 1 skipped (19.5 s) |
+| Frontend tests | ✅ 22/22 |
+| OpenAPI schema (`spectacular --validate --fail-on-warn`) | ✅ 0 errors, 0 warnings, 32 operations (first run: 17 endpoints undocumented, 13 untyped fields) |
+| `makemigrations --check` | ✅ No changes detected |
+| Migrations `0021` → `0019` → `0021` on the load-test database (Postgres) | ✅ both directions OK, no drift afterwards |
+| `npm run lint` | ✅ |
+| `pip-audit`, Docker builds | Run by CI on the PR |
+
+## Phase 3.5 · Test count
+| Suite | Phase 3 | Phase 3.5 | Change |
+|---|---|---|---|
+| `backtester.test_ops` (new) | — | 21 | logging (4), request context (5), metrics (3), throttle cache (3), OpenAPI (2), graceful shutdown (4) |
+| other backend suites | 126 | 126 | unchanged |
+| **Backend total** | **126** | **147** | **+21** |
+| Frontend | 21 | 22 | +1 (request ID in 5xx messages) |
+
+## Phase 3.5 · Correctness evidence
+| Property | How it is shown | Result |
+|---|---|---|
+| Request ID end to end | Valid incoming ID kept, invalid one replaced; header returned; stored on the created run; on the worker's log lines with `run_id` | ✅ *(tests)* |
+| Access log leaks nothing | Line has the route pattern (`api/runs/<int:pk>/`), not the URL; no email; health and metrics not logged | ✅ *(tests)* |
+| `/metrics` protected | No token configured → 404; wrong or missing Bearer → 401; right token → Prometheus text with queue depth by lane | ✅ *(tests)* |
+| Throttle counters shared | Two separate cache instances see the same counter | ✅ *(test)* |
+| Upsert is one statement | Query count per `set()`: 1 vs ≥ 3 for Django's `DatabaseCache` | ✅ *(test)* |
+| Login limit exact across 2 processes | 30 rapid wrong-password logins from one client against the real 2-process server (limit 10/min) | ✅ upsert: **10 allowed, 20 refused**, all within 8.8 s. Per-process counters: **20 allowed** in 16.7 s (16 on another try) |
+| Shutdown: no new claims | `SIGTERM` before claim → worker exits, run stays `queued` | ✅ *(test)* |
+| Shutdown: past the deadline | Run requeued with `attempts` unchanged, no `worker_id`, no progress | ✅ *(test)*; real process below |
+
+## Phase 3.5 · Load test (Locust; each user creates a guest, then browses, previews, and starts runs)
+Weights per user: dashboard 5, preview 2, runs list 2, strategies 2, run detail 2, catalog 1, create run 1; 0.1–0.5 s between
+tasks. Rate limits and guest quotas raised through env vars (they have their own tests). **No failed request in any run.**
+Each cell: requests/s · p50 · p95 · p99.
+
+| Users | Stock `DatabaseCache` | Stock, repeat | Per-process (`locmem`) | Per-process, repeat | **Upsert (shipped)** |
+|---|---|---|---|---|---|
+| 5 | 14.2 · 28 · 130 · 310 ms | 13.7 · 28 · 150 · 1,800 ms | 14.3 · 15 · 130 · 2,000 ms | — | **14.9 · 24 · 68 · 1,500 ms** |
+| 10 | 27.5 · 30 · 250 · 660 ms | 27.9 · 33 · 260 · 550 ms | 30.7 · 15 · 130 · 280 ms | 30.7 · 14 · 75 · 1,400 ms | **30.1 · 28 · 110 · 250 ms** |
+| 20 | 39.4 · 140 · 590 · 870 ms | 40.4 · 150 · 580 · 840 ms | 39.5 · 110 · 840 · 1,100 ms | 53.1 · 55 · 240 · 310 ms | **47.7 · 98 · 380 · 530 ms** |
+| 40 | 34.5 · 800 · 1,600 · 1,900 ms | 31.2 · 840 · 1,800 · 2,600 ms | 44.6 · 460 · 1,400 · 1,800 ms | 38.6 · 650 · 1,600 · 2,500 ms | **51.8 · 460 · 760 · 830 ms** |
+| 80 | 40.7 · 1,500 · 3,300 · 3,900 ms | 40.8 · 1,600 · 3,000 · 3,300 ms | 51.8 · 1,100 · 2,500 · 2,800 ms | — | **55.0 · 1,200 · 1,400 · 1,600 ms** |
+
+- **Knee:** about 15–20 concurrent users; beyond that, throughput flattens near 50 requests/s and latency climbs. The API
+  container's half CPU is the tightest limit in the setup (CPU usage of the other containers wasn't recorded).
+- **Stock `DatabaseCache` costs real throughput:** 31–41 req/s at 40–80 users in both runs, against 52–55 with the upsert. This
+  difference repeated, so it is real; reading `DatabaseCache.set()` explained it (D-075).
+- **Upsert vs per-process counters:** within noise. The per-process repeat at 20 users (53.1 req/s) beat the upsert run, the
+  first per-process run (39.5) didn't. The claim is "shared limits at no measurable cost", not "faster".
+- The repeat of the upsert column was stopped by the machine running out of memory and not rerun.
+
+## Phase 3.5 · Worker throughput (real `run_worker` processes, 160 queued builder runs, EMA 12/26, ~2,900 bars, no CPU limit)
+| Workers | Wall time (first claim → last completion) | Throughput | Median run | p95 run |
+|---|---|---|---|---|
+| 1 | 17.88 s | **537 runs/min** | 75 ms | 121 ms |
+| 2 | 9.95 s | **964 runs/min** (1.8×) | 77 ms | 127 ms |
+| 4 | 7.60 s | **1,263 runs/min** (2.35×) | 128.5 ms | 182 ms |
+
+160/160 completed every time; every worker exited 0 on `SIGTERM`; all `k` workers took work. Going from 2 to 4, each run gets
+slower (75 → 128 ms): the processes compete for CPU and Postgres on one machine.
+
+## Phase 3.5 · Claim latency vs queue depth (50 claims each; each locks, updates and commits one row)
+| Queued runs | Median | p95 | Max | Index used (`EXPLAIN`) |
+|---|---|---|---|---|
+| 100 | 8.70 ms | 19.75 ms | 21.75 ms | ✅ `idx_run_claim` |
+| 10,000 | 11.50 ms | 21.98 ms | 23.00 ms | ✅ |
+| 100,000 | 7.74 ms | 21.15 ms | 23.13 ms | ✅ |
+
+Flat: the claim reads the first row of an index, so depth doesn't matter.
+
+## Phase 3.5 · Graceful shutdown (real worker process, slow code strategy, `SIGTERM` 1.5 s into the run, grace 2 s)
+| | Result |
+|---|---|
+| Worker exited after `SIGTERM` | 2.26 s (on its own; no `SIGKILL` needed) |
+| Run status afterwards | `queued`, `attempts = 0`, no `worker_id`: the next worker claims it immediately |
+| Before this phase (from configuration, not measured) | killed by the platform at 30 s, run left `running` until stale recovery: `STALE_AFTER_S` 120 s, checked every 30 s → 120–150 s, and one attempt used |
+
+## Phase 3.5 · Bugs and surprises found while testing
+| What | Found by | Outcome |
+|---|---|---|
+| **Django's `DatabaseCache.set()` does a `COUNT(*)` over the table, a savepoint and 2–3 more statements on every write** | Load test: shared counters cost ~20% throughput; read the source | `UpsertDatabaseCache`: one statement; culling moved to housekeeping (D-075) |
+| 17 endpoints missing from the generated docs, 13 untyped fields | First `--fail-on-warn` run | Explicit `extend_schema`, type hints, enum names; CI check (D-076) |
+| The worker already finished its run on `SIGTERM`; the real gap was the lack of a deadline | Reading `run_worker` before changing it | D-074 rewritten; grace period + requeue |
+| A login-limit run labelled "upsert" allowed 20 of 30 | The throttle check itself | The API had been left on per-process counters by an interrupted load test; restarted on the upsert cache: exactly 10. The mislabelled run became the "before" measurement |
+| Swagger page needed templates and static files an API-only project lacked | Opening `/api/docs/` | Templates and staticfiles configured; assets served from the bundled package |
+| Suite looked 2× slower on the branch | Timing comparison | Back-to-back runs against the base branch showed machine noise, not a regression |
+
+## Phase 3.5 · Observations
+- **The load test paid for itself on the first run:** it found the stock cache's per-write cost, which no unit test would.
+- **Shared limits needed a shared store,** and the measurement that proved it (20 allowed instead of 10) came from an accident.
+- **Capacity is now a number:** ~50 requests/s and ~20 active users per small API instance; one worker does ~500 runs/min.

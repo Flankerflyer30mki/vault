@@ -1,0 +1,3 @@
+# Development and measurement tools. Never installed in production images.
+-r requirements.txt
+locust==2.47.0  # load testing (backend/loadtest/), see docs/evals.md
