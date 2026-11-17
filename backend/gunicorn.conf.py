@@ -3,7 +3,9 @@ import os
 bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
 workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 timeout = 30
-accesslog = "-"
+# Access lines come from Django (vault_core.observability): JSON, with request ID, route pattern and user id.
+# gunicorn's own access log would duplicate them in a different format.
+accesslog = None
 
 
 def post_worker_init(worker):

@@ -8,7 +8,7 @@ Execution model (documented in README "Execution model"):
   a gap through the level fills at the open; an intrabar touch fills at the level;
   if one bar touches both, the stop is assumed to fill first (conservative).
 - Long-only, one position at a time, fractional shares rounded down to QTY_STEP.
-- Commission and slippage are charged exactly once per fill; position sizing includes
+- Commission (buy and sell rates may differ) and slippage are charged exactly once per fill; position sizing includes
   the commission so cash never goes negative.
 - Equity at every bar = cash + quantity * close. The open position is NOT force-closed
   at the end; final value is the last equity point (marked to market).
@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, Decimal
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.1.0"  # 2.1: separate sell-side fee rate; builder strategies (spec.py)
 QTY_STEP = Decimal("0.000001")
 CENT = Decimal("0.0001")
 SMA_WINDOWS = (10, 50)
@@ -36,6 +36,11 @@ class Params:
     slippage_pct: Decimal = Decimal("0.0005")
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    sell_commission_pct: Decimal | None = None  # None = same as commission_pct (India: stamp duty is buy-only)
+
+    @property
+    def sell_fee_pct(self):
+        return self.commission_pct if self.sell_commission_pct is None else self.sell_commission_pct
 
 
 @dataclass
@@ -56,6 +61,7 @@ class Result:
     equity_curve: list = field(default_factory=list)  # [(ts, Decimal equity)]
     cash: Decimal = Decimal("0")
     quantity: Decimal = Decimal("0")
+    bars_in_market: int = 0  # bars that closed with a position open (for exposure)
 
 
 def simulate(bars, decide, p, warmup=0, on_progress=None):
@@ -85,7 +91,7 @@ def simulate(bars, decide, p, warmup=0, on_progress=None):
             price = raw_price * (one - p.slippage_pct)
             qty = r.quantity
             gross = qty * price
-            fee = gross * p.commission_pct
+            fee = gross * p.sell_fee_pct
             r.cash += gross - fee
             r.quantity = Decimal("0")
             entry = None
@@ -114,6 +120,7 @@ def simulate(bars, decide, p, warmup=0, on_progress=None):
 
         equity = r.cash + r.quantity * bar["close"]
         r.equity_curve.append((bar["ts"], equity))
+        r.bars_in_market += r.quantity > 0
 
         indicators = {f"sma_{w}": _sma(closes, w) for w in SMA_WINDOWS}
         decision = decide(bar, indicators)
@@ -139,7 +146,8 @@ def metrics(result, p, bars):
     out = {
         "final_value": result.equity_curve[-1][1].quantize(CENT) if curve else None,
         "cagr": None, "sharpe_ratio": None, "max_drawdown": None, "win_rate": None,
-        "buy_and_hold_return": None,
+        "buy_and_hold_return": None, "sortino_ratio": None, "calmar_ratio": None, "exposure": None,
+        "trade_count": len(result.fills) // 2,
         "total_commission": sum((f.commission for f in result.fills), Decimal("0")).quantize(CENT),
         "total_slippage": sum((f.slippage_cost for f in result.fills), Decimal("0")).quantize(CENT),
     }
@@ -164,6 +172,14 @@ def metrics(result, p, bars):
         mean = sum(rets) / len(rets)
         std = math.sqrt(sum((x - mean) ** 2 for x in rets) / (len(rets) - 1))
         out["sharpe_ratio"] = mean / std * math.sqrt(252) if std > 0 else None
+        # Sortino: like Sharpe, but only losing days count as risk (downside deviation, target 0).
+        downside = math.sqrt(sum(min(x, 0.0) ** 2 for x in rets) / len(rets))
+        out["sortino_ratio"] = mean / downside * math.sqrt(252) if downside > 0 else None
+
+    # Calmar: annual growth per unit of worst drawdown.
+    if out["cagr"] is not None and max_dd > 0:
+        out["calmar_ratio"] = out["cagr"] / max_dd
+    out["exposure"] = result.bars_in_market / len(curve)
 
     # Win rate: net P&L per round trip, after commission and slippage.
     wins = closed = 0
