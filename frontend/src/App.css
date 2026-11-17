@@ -817,6 +817,94 @@ a.button.small {
   margin: 4px 0 0;
 }
 
+/* AI research (Phase 5) */
+.research-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+}
+
+.research-form .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.research-goal {
+  font-style: italic;
+}
+
+.stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+
+.stages li {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  font-size: 0.9em;
+}
+
+.stages li.done {
+  opacity: 0.6;
+}
+
+.stages li.current {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  font-weight: 600;
+}
+
+.timeline {
+  padding-left: 18px;
+}
+
+.timeline .step {
+  margin-bottom: 10px;
+}
+
+.timeline .step p {
+  margin: 2px 0 0;
+}
+
+.step-who {
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.step-bad strong {
+  color: #b42318;
+}
+
+.candidates tr.chosen {
+  background: var(--accent-bg);
+}
+
+.research-report {
+  border: 1px solid var(--accent-border);
+  padding: 12px 14px;
+  margin: 16px 0;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+}
+
+.check-ok {
+  color: #067647;
+}
+
+.check-bad {
+  color: #b42318;
+}
+
 .builder-actions button {
   background: #444;
   color: white;

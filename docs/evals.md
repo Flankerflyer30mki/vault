@@ -669,3 +669,63 @@ and the first 10 unsupported ones. **This result is not recorded and can't be re
 - **The evaluation paid for itself on its first run** by finding a validator bug that also affected hand-built strategies.
 - **Free tiers shape the method:** tokens per minute set the pace (~4 cases/min), tokens per day set how many full runs
   fit (one per model), so re-runs reuse recorded answers.
+
+---
+
+# Phase 5 · AI research agent
+
+**Not run against a real model (D-094).** Everything below comes from tests in which a scripted fake model drives the
+agent through real research runs: real backtests on fixture bars, real waiting and resuming through the worker, the real
+held-out test and report. The quality question (does the agent's pick beat buy & hold, the best built-in template and a
+random search with the same backtest budget, on held-out data?) has **not** been measured. A first live run is on the
+Phase 6 checklist.
+
+## Phase 5 · Checks
+| Check | Result |
+|---|---|
+| Backend suite, Postgres 16 | ✅ 205/205 (48.3 s) |
+| Backend suite, SQLite | ✅ 204 passed + 1 skipped (40.0 s) |
+| Frontend tests | ✅ 30/30 |
+| `makemigrations --check`, OpenAPI `--fail-on-warn` | ✅ no changes; 0 warnings (3 enum names added for the new status fields) |
+| Migrations up and down on Postgres | ✅ via the legacy-migration test, which rolls the schema back to `0015` and forward again |
+| `npm run lint`, `npm run build` | ✅ |
+
+## Phase 5 · Test count
+| Suite | Phase 4 | Phase 5 | Change |
+|---|---|---|---|
+| `assist.test_research` (new) | — | 18 | complete runs (6), restarts and shutdown (2), API rules and hidden strategy (2), shared AI budget (1), action checks (5), grounding (2) |
+| `accounts.tests` | 31 | 31 | two expectations gain `research_per_day` |
+| other backend suites | 156 | 156 | — |
+| **Backend total** | **187** | **205** | **+18** |
+| Frontend | 25 | 30 | +5 (`ResearchPages.test.jsx`) |
+
+## Phase 5 · What the tests show (scripted model, real backtests)
+| Property | How it is shown | Result |
+|---|---|---|
+| A full run works end to end | test 2 strategies → next stage → search a parameter (3 values) → choose → held-out test → report | ✅ 4 decisions, 5 backtests, 5 model calls; stages and timeline as expected |
+| The agent never sees the held-out period | every candidate backtest ends before the split; the held-out dates never appear in any agent prompt | ✅ checked in the test and as a process check on every run |
+| The held-out period is tested exactly once, by code, for the choice | one `out` backtest from the split to the end, with the chosen spec and the original request ID | ✅ |
+| Rejected actions teach the agent | a forbidden action, then an invalid spec: the next prompts contain the exact errors (`candidates[0].spec.entry.all[0].left.params.period: …`) | ✅ rejected answers cost model calls, not decisions |
+| Budgets end runs honestly | 1-decision budget → code picks the best eligible candidate by the objective, and says so | ✅ no extra model calls |
+| Nothing eligible → a clean failure | three non-JSON answers; and a 1% drawdown constraint nothing meets | ✅ "no candidate met the requirements", no backtests wasted in the first case |
+| The summary can't invent numbers | a summary claiming 987.6% and a Sharpe of 9.99, twice | ✅ rewrite requested naming both numbers, then a plain summary; check marked failed |
+| Waiting doesn't hold a worker; crashes resume | while its round runs, research has nothing to do; a step that died is re-queued and goes back to waiting without a model call | ✅ (this test found a bug, below) |
+| Shutdown | `SIGTERM` past the grace period → step re-queued, attempt not used, no model call | ✅ |
+| Shared daily AI budget | with 4,000 tokens/day, one decision (2,300) fits, the next would not → code chooses, plain summary | ✅ |
+| Hidden placeholder strategy | not listed, 404 on detail, a run with it refused (400) | ✅ |
+| Research rounds stay out of other features | experiment list empty, round detail 404, experiment/backtest quotas unchanged, active jobs back to 0 when done | ✅ |
+| Action checks | wrong stage, duplicates, over budget, unknown parameter, too many values, all values invalid, ineligible choice, self-comparison | ✅ each rejected with a path-keyed reason |
+
+## Phase 5 · Bugs and surprises found while testing
+| What | Found by | Outcome |
+|---|---|---|
+| **A research step re-queued after a crash, while its backtests were still running, asked the agent to decide on unfinished results;** the agent's actions were rejected three times and the run failed | `test_waiting_doesnt_hold_a_worker_and_restarts_resume` | A step whose round is still running goes back to `waiting` without a model call |
+| **Postgres can't roll back a migration that both seeds a row and alters a table** ("pending trigger events") | The legacy-migration test (it rolls back to `0015`) on Postgres only | Split into `0022` (schema) and `0023` (data) |
+| Research tokens pushed the test deployment over its 10,000-token daily budget, so the report fell back to the plain summary | A rejected-actions test counting model calls | Correct behaviour; research tests use a larger budget, and a separate test now checks the shared budget on purpose |
+| `str.capitalize()` turned "AI" into "ai" in a timeline note | Test on the budget message | First letter upper-cased only |
+| A third set of `status` choices made the OpenAPI enum names ambiguous | Schema check in `--fail-on-warn` mode | Named explicitly (`ResearchStatusEnum`, `ResearchStageEnum`, `AssistStatusEnum`) |
+
+## Phase 5 · Observations
+- **The honesty is structural:** the held-out test, the "N candidates tried" count and the process checks are produced by
+  code in every report, so they don't depend on the model behaving well.
+- **What's unknown is quality, not safety:** a bad model can waste a run's budget, not break anything or overclaim.

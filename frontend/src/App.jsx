@@ -6,6 +6,8 @@ import ComparisonTrigger from "./pages/ComparisonTrigger";
 import Dashboard from "./pages/Dashboard";
 import ExperimentDetail from "./pages/ExperimentDetail";
 import OptimizationTrigger from "./pages/OptimizationTrigger";
+import Research from "./pages/Research";
+import ResearchDetail from "./pages/ResearchDetail";
 import RunDetail from "./pages/RunDetail";
 import RunTrigger from "./pages/RunTrigger";
 import StrategyBuilder from "./pages/StrategyBuilder";
@@ -29,6 +31,7 @@ function Nav() {
           <NavLink to="/run">New Backtest</NavLink>
           <NavLink to="/compare">Compare</NavLink>
           <NavLink to="/optimize">Optimize</NavLink>
+          <NavLink to="/research">Research</NavLink>
           <span className="nav-spacer" />
           <NavLink to="/account" className="nav-user">
             {user.is_guest ? "Guest" : user.display_name || user.email}
@@ -92,6 +95,8 @@ function App() {
             <Route path="/compare" element={page(<ComparisonTrigger />)} />
             <Route path="/experiments/:id" element={page(<ExperimentDetail />)} />
             <Route path="/optimize/:id" element={page(<ExperimentDetail />)} />
+            <Route path="/research" element={page(<Research />)} />
+            <Route path="/research/:id" element={page(<ResearchDetail />)} />
           </Routes>
         </div>
       </AuthProvider>

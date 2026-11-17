@@ -17,6 +17,7 @@ Vault runs a trading strategy against historical daily market data and reports r
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
 - [Experiments: comparisons and optimizations](#experiments-comparisons-and-optimizations)
 - [AI assistance: describe a strategy in words](#ai-assistance-describe-a-strategy-in-words)
+- [AI research agent](#ai-research-agent)
 - [Accounts and workspaces](#accounts-and-workspaces)
 - [Operations: logs, metrics, capacity](#operations-logs-metrics-capacity)
 - [Security](#security)
@@ -231,6 +232,29 @@ How it works (decisions D-077 to D-083):
 
 The first run also found a validator gap: a rule comparing something with itself ("SMA 20 crosses above SMA 20") was accepted. It is now rejected, and the repair round fixes the model's answer.
 
+## AI research agent
+
+On the **Research** page you give a goal ("a trend-following strategy for RELIANCE.NS that beats buy and hold, max drawdown 25%"), a symbol, a period and what to optimise (Sharpe, Calmar or total return). An agent then does the research loop itself (decisions D-088 to D-095):
+
+1. **Explore:** it proposes clearly different strategies and backtests them as one round.
+2. **Refine:** it reads the results and tries variations or searches one parameter of a promising candidate.
+3. **Choose:** it picks one; a candidate must have at least 3 round trips and meet the drawdown constraint to be eligible.
+4. **Held-out test (code, not the agent):** the last 30% of the period is held out. The agent never sees it, and every one of its backtests ends before it. The choice is tested there **once**.
+5. **Report:** research and held-out results side by side, buy & hold for each, how many candidates were tried, whether it beat buy & hold, a summary by the agent whose every number is checked against the results (otherwise a plain summary is used), and process checks (held-out tested once, never seen by the agent, budgets respected, summary grounded, drawdown constraint on held-out data).
+
+You see each decision and its reason in a live timeline, can open any candidate's backtest, and **save** any candidate as a strategy. The agent can spend backtests, but it can't save, change costs or stops, or reach anything outside Vault.
+
+**How it runs:** each research run is a job. One claim is one short step (one model call, or code work). After queueing a round of backtests the run waits, so no worker is held, and the worker wakes it when the round finishes. Steps survive restarts and deploys. Each decision is one checked JSON action (`test`, `search`, `next_stage`, `choose`); a rejected one goes back to the agent with path-keyed errors. Its prompt is rebuilt from the run's state each time, so cost per step stays flat.
+
+| Limit | Default | |
+|---|---|---|
+| Per research run | 8 decisions, 14 model calls, 40 backtests, 40,000 tokens | `RESEARCH_MAX_*`; when one runs out, code picks the best eligible candidate |
+| Per round | 6 candidates, or 6 values in a parameter search | `RESEARCH_MAX_CANDIDATES_PER_ROUND`, `RESEARCH_MAX_SEARCH_VALUES` |
+| Research runs per 24 h | guest 0 / unverified 1 / verified 3; one at a time | `QUOTA_<TIER>_RESEARCH_PER_DAY`; counts as one active job; its backtests aren't counted as yours |
+| Period | at least 730 days | `RESEARCH_MIN_DAYS` |
+
+Research tokens share the daily AI budget with the assistant. **Status: tested with a scripted model and real backtests, not yet run against a real model or measured for quality** (whether its picks beat buy & hold, the best template or a random search on held-out data). See [docs/evals.md](docs/evals.md#phase-5--ai-research-agent).
+
 ## Accounts and workspaces
 
 Everything a user creates is private. Another user's run, trades or experiment returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
@@ -369,6 +393,7 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, an 
 - curve downsampling keeping extremes and ends, the new metrics hand-checked, tunable-parameter grouping
 - frontend: comparison form (cell count and limits, request body), experiment page (heatmap values and colours, benchmark row, failures, metric switch; optimization columns and skipped combinations)
 - AI assistance (no test reaches the network): a valid answer, code fences tolerated, validator errors sent back and repaired, giving up after the repair budget, refusals, answers that aren't a spec (including `import os` as the spec) rejected, bounded names and notes, the Groq client (request shape, retry after a rate limit, no retry on a bad key, non-JSON output handed to repair), the API end to end with the request ID stored, off without a key, other users' requests 404, length limits, one-at-a-time and daily quotas, the answer cache, the token budget, failures not retried, descriptions never logged and never sent with account data, shutdown requeue, stale requests failed, old requests deleted, AI requests answered before backtests, `/metrics`; the evaluation's grading (equivalent formulations match, near misses don't, every reference trades), a perfect and a lazy fake model, and the committed live recordings replaying to their recorded scores; frontend: the panel hidden without AI, filling the form and showing notes, showing a refusal without touching the form
+- AI research agent (scripted model, real backtests): a complete run (explore, refine with a parameter search, choose, held-out test, report), the held-out period never in the agent's prompts and tested exactly once, rejected actions returned with exact errors, budgets ending a run with code's choice, clean failure when nothing is eligible, an invented number in the summary caught, waiting without holding a worker, crash recovery, shutdown, the shared daily AI budget, the hidden placeholder strategy, research rounds kept out of experiment lists and quotas, every action check; frontend: starting a run, progress and timeline, the report with checks, saving a candidate, a failed run
 - operations: JSON log lines with request and run IDs, request IDs kept or replaced and stored on runs, the access line using the route pattern, `/metrics` (off without a token, Bearer check, queue health), throttle counters shared between cache instances and written in one statement, expired cache rows removed, the OpenAPI schema generated without warnings, and graceful shutdown (no claims after `SIGTERM`, a run past the grace period requeued without using an attempt)
 
 ## Deploy (Vercel + Render)
@@ -462,5 +487,6 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built (D-061).
 - Worker caches are per process: several workers each warm their own. An experiment's limit stays 25 child runs: a 25-child batch takes about 3 s on one worker, so the limit is about result readability, not capacity.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
+- The research agent hasn't been run against a real model yet, and its quality (vs buy & hold, the best template and a random search on held-out data) hasn't been measured. One symbol per run; its held-out test is a single period.
 - AI answers can be wrong in ways the validator can't see (a valid strategy that isn't what you meant), which is why the AI only fills the form for you to review. The provider's free limits are shared by the whole deployment, and providers retire models; switching `AI_MODEL` needs a new evaluation run.
 - Capacity numbers come from a local machine with Render-like container limits, not from Render itself; repeat the load test on staging.
