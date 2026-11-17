@@ -126,11 +126,18 @@ function Report({ run }) {
       <ul className="checks">
         {Object.entries(r.checks)
           .filter(([, v]) => v !== null)
-          .map(([k, v]) => (
-            <li key={k} className={v ? "check-ok" : "check-bad"}>
-              {v ? "✓" : "✗"} {CHECK_LABEL[k] || k}
-            </li>
-          ))}
+          .map(([k, v]) =>
+            k === "summary_numbers_grounded" && !v ? (
+              // Not a broken rule: the agent's text was replaced, and what is shown is built from the results.
+              <li key={k} className="check-warn">
+                ⚠ The agent&apos;s summary didn&apos;t pass the number check, so Vault&apos;s plain summary is shown
+              </li>
+            ) : (
+              <li key={k} className={v ? "check-ok" : "check-bad"}>
+                {v ? "✓" : "✗"} {CHECK_LABEL[k] || k}
+              </li>
+            ),
+          )}
       </ul>
       <p className="hint">
         The research result is optimistic: it was picked from {r.candidates_tested} candidates on that data. The
@@ -194,6 +201,7 @@ function ResearchDetail() {
                   <td>{c.id}</td>
                   <td>
                     <Link to={`/runs/${c.run_id}`}>{c.name}</Link>
+                    {c.same_as && <span className="hint"> (same results as {c.same_as})</span>}
                   </td>
                   <td>{c.metrics ? num(c.metrics.sharpe_ratio) : c.status}</td>
                   <td>{c.metrics ? pct(c.metrics.total_return) : ""}</td>

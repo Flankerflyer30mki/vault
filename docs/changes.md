@@ -286,3 +286,12 @@ New **Research** page (`/research`: goal form, list of runs) and `/research/<id>
 - **New env vars (optional):** `RESEARCH_MAX_STEPS`, `RESEARCH_MAX_MODEL_CALLS`, `RESEARCH_MAX_BACKTESTS`, `RESEARCH_MAX_TOKENS`, `RESEARCH_MAX_CANDIDATES_PER_ROUND`, `RESEARCH_MAX_SEARCH_VALUES`, `RESEARCH_MIN_TRADES`, `RESEARCH_MIN_DAYS`, `RESEARCH_STALE_AFTER_S`, `RESEARCH_MAX_ATTEMPTS`; `QUOTA_<TIER>_RESEARCH_PER_DAY`. Research needs the Phase 4 AI settings.
 - **Not yet run against a real model** (D-094): do one live research run on staging before announcing it.
 - A research run costs roughly 10–40K tokens; with the free tier's 200K a day per model, plan for a handful of runs a day.
+
+### Follow-up: fixes from the first live run · branch `phase-5-live-fixes` · 2026-11-17 (D-096)
+- Number check accepts values to 4 decimals; agent steps get 4,000 output tokens and low reasoning effort
+  (`RESEARCH_MAX_OUTPUT_TOKENS`, `RESEARCH_REASONING_EFFORT`); explore capped at `RESEARCH_MAX_EXPLORE_ROUNDS` (2);
+  candidates with identical results flagged (`same_as` in the API, "(same results as cN)" in the UI); a replaced summary
+  is shown as a warning.
+- `providers.get_provider(max_tokens, reasoning_effort)`; files: `assist/agent.py`, `research.py`, `providers.py`,
+  `serializers.py`, `test_research.py` (+4); `vault_core/settings.py`; `frontend/src/pages/ResearchDetail.jsx` (+ test),
+  `App.css`; docs.

@@ -70,7 +70,19 @@ def candidates(run):
         status = r.status if r else "missing"
         m = _metrics(r) if r and status == BacktestRun.COMPLETED else None
         out.append({**c, "status": status, "metrics": m, "eligible": bool(m) and _eligible(run, m),
-                    "error": (r.error_message or "")[:120] if r and status == BacktestRun.FAILED else ""})
+                    "error": (r.error_message or "")[:120] if r and status == BacktestRun.FAILED else "",
+                    "same_as": None})
+    # Different rules can trade identically (MACD histogram over zero IS the line over its signal): the first live run
+    # spent backtests on such twins. Flag later twins so the agent (and the user) can see it (D-096).
+    seen = {}
+    for c in out:
+        if c["metrics"] is None:
+            continue
+        key = tuple(c["metrics"].get(k) for k in ("total_return", "trade_count", "max_drawdown", "sharpe_ratio"))
+        if key in seen:
+            c["same_as"] = seen[key]
+        else:
+            seen[key] = c["id"]
     return out
 
 
@@ -162,7 +174,7 @@ def agent_step(run, wid, provider):
     if SHUTDOWN.overdue():
         return _requeue(run, wid)
 
-    system = agent.system_prompt(ctx["max_round"], ctx["max_values"])
+    system = agent.system_prompt(ctx["max_round"], ctx["max_values"], cfg()["MAX_EXPLORE_ROUNDS"])
     user = agent.state_message(ctx)
     # Process check (D-091): the agent's prompt never carries the held-out period.
     leaked = run.split_date.isoformat() in user or run.end_date.isoformat() in user
@@ -235,6 +247,13 @@ def _apply(run, action, tokens, ms):
         if kind == "search":
             args.update({"of": action["of"], "parameter": action["parameter"], "skipped": action["skipped"]})
         _log(run, run.stage, "agent", kind, action["why"], args=args, tokens=tokens, ms=ms)
+        if run.stage == RR.EXPLORE:
+            run.state["explore_rounds"] = run.state.get("explore_rounds", 0) + 1
+            if run.state["explore_rounds"] >= cfg()["MAX_EXPLORE_ROUNDS"]:
+                # Code moves the run on (D-096): exploring for ever leaves no budget to refine or choose.
+                _log(run, RR.EXPLORE, "system", "next_stage",
+                     f"Explore limit reached ({cfg()['MAX_EXPLORE_ROUNDS']} rounds): moving on to refining.")
+                run.stage = RR.REFINE
     elif kind == "next_stage":
         _log(run, run.stage, "agent", kind, action["why"], tokens=tokens, ms=ms)
         run.stage, run.status, run.worker_id = RR.REFINE, RR.QUEUED, ""
@@ -415,7 +434,8 @@ def step(run, wid):
         # never be asked to decide on unfinished results.
         RR.objects.filter(id=run.id, worker_id=wid, status=RR.RUNNING).update(status=RR.WAITING, worker_id="")
         return
-    provider = providers.get_provider()
+    c = cfg()
+    provider = providers.get_provider(max_tokens=c["MAX_OUTPUT_TOKENS"], reasoning_effort=c["REASONING_EFFORT"])
     if run.stage in (RR.EXPLORE, RR.REFINE):
         if provider is None:
             with transaction.atomic():

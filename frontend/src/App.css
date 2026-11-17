@@ -905,6 +905,10 @@ a.button.small {
   color: #b42318;
 }
 
+.check-warn {
+  color: #b54708;
+}
+
 .builder-actions button {
   background: #444;
   color: white;
