@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "drf_spectacular_sidecar",
     "accounts",
     "backtester",
+    "assist",
 ]
 
 MIDDLEWARE = [
@@ -173,10 +174,31 @@ VAULT = {
     # Per-user quotas by tier; override any value with QUOTA_<TIER>_<LIMIT>, e.g. QUOTA_VERIFIED_RUNS_PER_DAY.
     "QUOTAS": {tier: {k: env_int(f"QUOTA_{tier.upper()}_{k.upper()}", v) for k, v in defaults.items()}
                for tier, defaults in {
-                   "guest": {"active_jobs": 2, "runs_per_day": 20, "experiments_per_day": 2, "strategies": 5},
-                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "experiments_per_day": 3, "strategies": 20},
-                   "verified": {"active_jobs": 10, "runs_per_day": 200, "experiments_per_day": 20, "strategies": 100},
+                   "guest": {"active_jobs": 2, "runs_per_day": 20, "experiments_per_day": 2, "strategies": 5,
+                             "ai_requests_per_day": 5},
+                   "unverified": {"active_jobs": 3, "runs_per_day": 30, "experiments_per_day": 3, "strategies": 20,
+                                  "ai_requests_per_day": 10},
+                   "verified": {"active_jobs": 10, "runs_per_day": 200, "experiments_per_day": 20, "strategies": 100,
+                                "ai_requests_per_day": 50},
                }.items()},
+}
+
+# --- AI assistance (Phase 4, D-077 to D-083). Off unless AI_PROVIDER and its key are set; the app works fully without it.
+AI = {
+    "PROVIDER": env("AI_PROVIDER", ""),  # "groq"
+    "GROQ_API_KEY": env("GROQ_API_KEY", ""),
+    "MODEL": env("AI_MODEL", "openai/gpt-oss-120b"),
+    "REASONING_EFFORT": env("AI_REASONING_EFFORT", ""),  # only for reasoning models: low | medium | high
+    "TIMEOUT_S": env_int("AI_TIMEOUT_S", 30),
+    "MAX_OUTPUT_TOKENS": env_int("AI_MAX_OUTPUT_TOKENS", 2000),
+    "MAX_REPAIRS": env_int("AI_MAX_REPAIRS", 2),
+    "MAX_PROMPT_CHARS": env_int("AI_MAX_PROMPT_CHARS", 1000),
+    # Whole deployment, per UTC day. Keep it below the provider's free daily token limit (D-081).
+    "DAILY_TOKEN_BUDGET": env_int("AI_DAILY_TOKEN_BUDGET", 150_000),
+    "MAX_QUEUED": env_int("AI_MAX_QUEUED", 20),  # global queued AI requests before 503
+    "CACHE_DAYS": env_int("AI_CACHE_DAYS", 7),
+    "RETENTION_DAYS": env_int("AI_RETENTION_DAYS", 30),
+    "STALE_AFTER_S": env_int("AI_STALE_AFTER_S", 180),
 }
 
 # --- Observability (D-069 to D-073)

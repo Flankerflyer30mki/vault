@@ -311,6 +311,7 @@ def work_one(wid):
 
 
 def work_forever(poll_s=2.0, stop=lambda: False):
+    from assist import jobs as assist_jobs  # assist imports this module, so import it here
     wid = worker_id()
     log.info("event=worker_started worker=%s", wid)
     last_recover = last_housekeeping = 0.0
@@ -322,12 +323,14 @@ def work_forever(poll_s=2.0, stop=lambda: False):
             if time.monotonic() - last_recover > 30:
                 recover_stale()
                 finish_pending_optimizations()
+                assist_jobs.recover_stale()
                 last_recover = time.monotonic()
             if time.monotonic() - last_housekeeping > HOUSEKEEPING_EVERY_S:
                 from accounts.housekeeping import run as housekeeping
                 housekeeping()
                 last_housekeeping = time.monotonic()
-            busy = work_one(wid)
+            # AI requests first: a person is waiting on each, and each takes seconds (D-078).
+            busy = assist_jobs.work_one(wid) or work_one(wid)
         except Exception:
             log.exception("event=worker_loop_error")
             busy = False
