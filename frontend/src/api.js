@@ -1,10 +1,29 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
 
+// Same-origin API: Vite (dev), nginx (compose) and Vercel (prod) forward /api to Django, so the session
+// cookie is first-party and there is no CORS. axios echoes the csrftoken cookie in X-CSRFToken on every
+// unsafe request, reading it fresh each time (Django rotates it on login).
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000/api",
+  baseURL: import.meta.env.VITE_API_URL || "/api",
   timeout: 15000,
+  xsrfCookieName: "csrftoken",
+  xsrfHeaderName: "X-CSRFToken",
 });
+
+// Any "not signed in" answer (session expired, signed out in another tab, password changed elsewhere)
+// tells the auth context, which sends the user to the login page.
+export const UNAUTHENTICATED = "vault:unauthenticated";
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const detail = err?.response?.data?.detail;
+    if (err?.response?.status === 403 && typeof detail === "string" && detail.startsWith("Authentication credentials")) {
+      window.dispatchEvent(new Event(UNAUTHENTICATED));
+    }
+    return Promise.reject(err);
+  },
+);
 
 export default api;
 
@@ -14,8 +33,15 @@ export const TERMINAL = ["completed", "failed", "partially_completed"];
 export function errorText(err, fallback = "Request failed") {
   const res = err?.response;
   if (!res) return "Cannot reach the API. Check your connection and try again.";
-  if (res.status === 429) return "Too many requests. Wait a moment and try again.";
-  if (res.status >= 500) return res.data?.detail || "The server is unavailable. Try again shortly.";
+  if (res.status === 429) return res.data?.detail && !/throttled/i.test(res.data.detail)
+    ? res.data.detail // a quota message says which limit was hit
+    : "Too many requests. Wait a moment and try again.";
+  if (res.status >= 500) {
+    // The request ID ties this error to the server's log lines for the same request (D-070).
+    const id = res.headers?.["x-request-id"];
+    const msg = res.data?.detail || "The server is unavailable. Try again shortly.";
+    return id ? `${msg} (request ID: ${id})` : msg;
+  }
   const d = res.data;
   if (d && typeof d === "object") {
     if (d.detail) return d.detail;
@@ -62,7 +88,14 @@ export function usePoll(url, ms = 2000, maxErrors = 5) {
 }
 
 export const pct = (v, dp = 2) => (v === null || v === undefined ? "N/A" : `${(v * 100).toFixed(dp)}%`);
-export const money = (v) => (v === null || v === undefined ? "N/A" : `$${parseFloat(v).toFixed(2)}`);
+// Money in the symbol's currency (the API sends "INR", "USD", or null when the exchange is unknown).
+// INR uses Indian digit grouping: ₹1,00,000.00.
+export const money = (v, currency = "USD") => {
+  if (v === null || v === undefined || v === "") return "N/A";
+  const n = parseFloat(v);
+  if (!currency) return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", { style: "currency", currency }).format(n);
+};
 export const num = (v, dp = 2) => (v === null || v === undefined ? "N/A" : Number(v).toFixed(dp));
 export const list = (data) => (Array.isArray(data) ? data : data?.results || []);
 // Legacy runs stored a bare list of floats; v2 stores [date, value].

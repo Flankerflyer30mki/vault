@@ -367,3 +367,666 @@ h3 {
 .pre {
   white-space: pre-line;
 }
+
+/* ---- accounts, banner, dashboard (Phase 1) ---- */
+.navbar h2 a {
+  color: #fff;
+}
+
+.navbar a.active {
+  color: #fff;
+  border-bottom: 2px solid #4dabf7;
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+.nav-user {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #4dabf7;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.nav-logout {
+  color: #ddd;
+  text-decoration: none;
+}
+
+.banner {
+  background: #2a2410;
+  border-bottom: 1px solid #5c4d16;
+  color: #ffd43b;
+  padding: 10px 30px;
+  font-size: 15px;
+}
+
+.banner a {
+  color: #fff;
+}
+
+.auth-card {
+  max-width: 420px;
+  margin: 20px auto;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 15px;
+}
+
+.auth-form input {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 8px;
+  font: inherit;
+}
+
+.auth-form button,
+.guest-box button,
+a.button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+  font-size: 15px;
+}
+
+.auth-form button:hover,
+.guest-box button:hover,
+a.button:hover {
+  background: #555;
+}
+
+.auth-form button:disabled,
+.guest-box button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.secondary,
+a.button.secondary {
+  background: transparent;
+  border: 1px solid #555;
+}
+
+.auth-form button.danger {
+  background: #7a2424;
+}
+
+.auth-links {
+  margin-top: 14px;
+  font-size: 15px;
+}
+
+.guest-box {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #333;
+}
+
+.success {
+  color: #51cf66;
+}
+
+.account-page .account-section {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid #333;
+}
+
+.tier {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+.tier-verified {
+  border-color: #51cf66;
+  color: #51cf66;
+}
+
+.tier-unverified {
+  border-color: #ffd43b;
+  color: #ffd43b;
+}
+
+.tier-guest {
+  border-color: #adb5bd;
+  color: #adb5bd;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.dash-section {
+  margin-bottom: 30px;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.quota {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.quota span {
+  font-size: 13px;
+}
+
+.quota .progress-bar-outer {
+  height: 8px;
+}
+
+.progress-bar-inner.full {
+  background: #ff6b6b;
+}
+
+.progress-cell {
+  min-width: 160px;
+}
+
+.progress-cell .progress-bar-outer {
+  height: 10px;
+  margin: 0;
+}
+
+.pos {
+  color: #51cf66;
+}
+
+.neg {
+  color: #ff6b6b;
+}
+
+.badge-pos {
+  margin-left: 6px;
+}
+
+.badge-neg {
+  margin-left: 6px;
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.chip-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-list li {
+  border: 1px solid #333;
+  padding: 4px 10px;
+  font-size: 14px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 700px) {
+  .navbar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .nav-spacer {
+    display: none;
+  }
+
+  .content,
+  .banner {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .trade-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* ---- strategy builder (Phase 2) ---- */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.badge-kind {
+  border-color: #4dabf7;
+  color: #4dabf7;
+}
+
+.strategy-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+
+button.small,
+a.button.small {
+  padding: 4px 10px;
+  font-size: 13px;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.builder form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 980px;
+}
+
+.builder label,
+.builder-name {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.builder input,
+.builder select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.builder input[aria-invalid="true"] {
+  border-color: #ff6b6b;
+}
+
+.group {
+  border: 1px solid #333;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group legend {
+  color: #eee;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.conditions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.condition {
+  border: 1px solid #2c2c2c;
+  background: #181818;
+  padding: 10px;
+}
+
+.condition.has-error {
+  border-color: #ff6b6b;
+}
+
+.condition-summary {
+  margin: 0 0 8px;
+  color: #eee;
+  font-size: 14px;
+}
+
+.condition-fields,
+.operand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.operand {
+  padding: 6px;
+  border: 1px dashed #333;
+}
+
+.builder .param {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.builder .param input {
+  width: 72px;
+}
+
+.field-error {
+  display: block;
+  color: #ff6b6b;
+  font-size: 13px;
+  width: 100%;
+}
+
+.preview pre {
+  white-space: pre;
+  overflow-x: auto;
+  background: #111;
+  border: 1px solid #333;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.builder-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* "Describe your strategy" (Phase 4) */
+.assist {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+
+.assist label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.assist textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  resize: vertical;
+}
+
+.assist-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.assist-actions button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.assist-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.assist-result ul {
+  margin: 4px 0 0;
+}
+
+/* AI research (Phase 5) */
+.research-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+}
+
+.research-form .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.research-goal {
+  font-style: italic;
+}
+
+.stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+
+.stages li {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  font-size: 0.9em;
+}
+
+.stages li.done {
+  opacity: 0.6;
+}
+
+.stages li.current {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  font-weight: 600;
+}
+
+.timeline {
+  padding-left: 18px;
+}
+
+.timeline .step {
+  margin-bottom: 10px;
+}
+
+.timeline .step p {
+  margin: 2px 0 0;
+}
+
+.step-who {
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.step-bad strong {
+  color: #b42318;
+}
+
+.candidates tr.chosen {
+  background: var(--accent-bg);
+}
+
+.research-report {
+  border: 1px solid var(--accent-border);
+  padding: 12px 14px;
+  margin: 16px 0;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+}
+
+.check-ok {
+  color: #067647;
+}
+
+.check-bad {
+  color: #b42318;
+}
+
+.check-warn {
+  color: #b54708;
+}
+
+.builder-actions button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 10px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.group > button.secondary {
+  align-self: flex-start;
+  color: #ddd;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.group > button:disabled,
+.condition button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 700px) {
+  .condition-fields,
+  .operand {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ---- experiments: comparisons and optimizations (Phase 3) ---- */
+.run-form.wide-form {
+  max-width: 640px;
+}
+
+.pick-list {
+  border: 1px solid #333;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pick-list legend {
+  color: #eee;
+  padding: 0 6px;
+}
+
+.run-form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #ddd;
+}
+
+.param-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.param-row input[type="text"] {
+  flex: 1;
+  min-width: 160px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-form .chip-row button {
+  margin-top: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.heatmap th[scope="row"] {
+  text-align: left;
+  color: #ddd;
+  font-weight: normal;
+}
+
+.heat-cell a {
+  display: block;
+  color: #eee;
+  text-decoration: none;
+}
+
+/* Five steps from worst (red) to best (green) within each column; no level = no colour. */
+.heat-cell[data-level="0"] { background: rgba(255, 107, 107, 0.35); }
+.heat-cell[data-level="1"] { background: rgba(255, 146, 43, 0.25); }
+.heat-cell[data-level="2"] { background: rgba(255, 212, 59, 0.18); }
+.heat-cell[data-level="3"] { background: rgba(148, 216, 45, 0.25); }
+.heat-cell[data-level="4"] { background: rgba(81, 207, 102, 0.35); }
+
+.bench-row th,
+.bench-row td {
+  color: #aaa;
+  font-style: italic;
+  border-top: 1px dashed #444;
+}
+
+.inline-label {
+  color: #ccc;
+  font-size: 14px;
+}
+
+.inline-label select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 4px 8px;
+}
