@@ -30,6 +30,7 @@ def metrics(request):
     if not hmac.compare_digest(sent.encode(), f"Bearer {token}".encode()):
         return HttpResponse("unauthorized\n", status=401, content_type="text/plain",
                             headers={"WWW-Authenticate": "Bearer"})
+    from assist.ops import ai_snapshot, render_ai_metrics
     from backtester.engine import ENGINE_VERSION
     from backtester.ops import queue_snapshot, render_queue_metrics
     from vault_core.observability import REGISTRY
@@ -37,6 +38,7 @@ def metrics(request):
              f'vault_build_info{{engine_version="{ENGINE_VERSION}"}} 1']
     lines += REGISTRY.render(pid=os.getpid())
     lines += render_queue_metrics(queue_snapshot())
+    lines += render_ai_metrics(ai_snapshot())
     return HttpResponse("\n".join(lines) + "\n", content_type="text/plain; version=0.0.4")
 
 
@@ -45,6 +47,7 @@ urlpatterns = [
     path("health/ready", ready),
     path("metrics", metrics),
     path("api/auth/", include("accounts.urls")),
+    path("api/assist/", include("assist.urls")),
     path("api/", include("backtester.urls")),
 ]
 

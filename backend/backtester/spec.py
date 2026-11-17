@@ -85,6 +85,9 @@ def _condition(c, path, errors):
     left, right = _operand(c.get("left"), f"{path}.left", errors), _operand(c.get("right"), f"{path}.right", errors)
     if left and right and "const" in left and "const" in right:
         errors[path] = "compare the market to something: both sides can't be numbers"
+    elif left and right and left == right:
+        # SMA(20) vs SMA(20) is never above, below or crossing: a rule that can never fire (found by the AI evaluation).
+        errors[path] = "compares something with itself: the two sides must differ"
     return {"left": left, "op": c.get("op"), "right": right}
 
 

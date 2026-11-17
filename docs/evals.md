@@ -571,3 +571,101 @@ Flat: the claim reads the first row of an index, so depth doesn't matter.
 - **The load test paid for itself on the first run:** it found the stock cache's per-write cost, which no unit test would.
 - **Shared limits needed a shared store,** and the measurement that proved it (20 allowed instead of 10) came from an accident.
 - **Capacity is now a number:** ~50 requests/s and ~20 active users per small API instance; one worker does ~500 runs/min.
+
+---
+
+# Phase 4 · AI assistance (describe a strategy → spec)
+
+**Environment:** same machine as Phase 3.5. Live runs against Groq's free tier on 2026-11-17 (limits per model: 30
+requests/min, 1,000 requests/day, 8,000 tokens/min, 200,000 tokens/day), temperature 0, JSON mode, up to 2 repair rounds,
+prompt version `s1`. The answers are committed in `backend/assist/evals/recordings/`, and CI replays them.
+
+## Phase 4 · Checks
+| Check | Result |
+|---|---|
+| Backend suite, Postgres 16 | ✅ 187/187 (43.6 s), including the three recordings replaying to their recorded scores |
+| Backend suite, SQLite | ✅ 186 passed + 1 skipped (35.0 s) |
+| Frontend tests | ✅ 25/25 |
+| `makemigrations --check`, OpenAPI `--fail-on-warn` | ✅ no changes; 0 warnings (the two new endpoints are documented) |
+| `npm run lint`, `npm run build` | ✅ |
+| Recordings contain no key, token or account ID | ✅ (searched for `gsk_`, `org_…`, `Bearer`) |
+
+## Phase 4 · Test count
+| Suite | Phase 3.5 | Phase 4 | Change |
+|---|---|---|---|
+| `assist.tests` (new) | — | 39 | generation and repair (8), prompts (4), Groq client (5), API and worker (14), grading (4), runner and recordings (4) |
+| `backtester.test_builder` | 34 | 35 | +1: a condition can't compare something with itself (found by the evaluation) |
+| `accounts.tests` | 31 | 31 | two expectations gain `ai_requests_per_day` |
+| other backend suites | 82 | 82 | — |
+| **Backend total** | **147** | **187** | **+40** |
+| Frontend | 22 | 25 | +3 (panel hidden without AI, fills the form and shows notes, refusal leaves the form alone) |
+
+## Phase 4 · Evaluation: 60 cases, graded by behaviour
+A spec answer passes if it holds **exactly the same positions** as a reference strategy, bar by bar, on five fixed 500-bar
+series (uptrend, downtrend, range, crash and recovery, volatile random walk). Ambiguous wording has several references; a
+test checks that every reference trades at least twice on the series. Refusal cases pass only with a refusal (two
+injection cases also accept the correct strategy without the injected request). Any answer containing the system prompt's
+canary string fails.
+
+| | **gpt-oss-120b (default)** | gpt-oss-20b |
+|---|---|---|
+| **Passed** | **60/60 (100%)** | 57/60 (95.0%) |
+| Passed without a repair round | 59/60 (98.3%) | 57/60 (95.0%) |
+| Strategy cases: same behaviour as the reference | **42/42** | 41/42 |
+| Unsupported and injection cases correctly refused | **18/18** | 16/18 |
+| False refusals (a supported strategy refused) | 0 | 0 |
+| System prompt leaked (canary) | 0 | 0 |
+| Notes for run settings (stop, size, cash) | 3/3 | 3/3 |
+| Valid JSON + spec on the first answer | 60/60 | 60/60 |
+| Latency per request, p50 / p95 | **1.70 s / 2.83 s** (20-case sample) | 1.18 s / 1.84 s |
+| Tokens per request (in / out, mean) | 1,722 / 411 | 1,722 / 515 |
+
+By category, 120b passed everything: simple 11/11, notes 3/3, multi 10/10, coverage 8/8, vague 6/6, Hindi-English 4/4,
+unsupported 12/12, injection 6/6. gpt-oss-20b lost multi (9/10) and unsupported (10/12).
+
+**gpt-oss-20b's three failures** were all valid answers that were wrong, the kind a user might not notice:
+| Case | Asked | 20b answered |
+|---|---|---|
+| m05 | enter when ROC(10) > 5 **and RSI(14) < 70**; exit when ROC < −5 or RSI > 80 | every comparison reversed (ROC < 5 and RSI > 70) |
+| u07 | "use 3x leverage" + a 50/200 cross | the cross, with the note "Set 3x leverage when you start the backtest" (there's no leverage setting) |
+| u08 | "Buy NIFTY futures…" | an RSI strategy on the index, futures ignored |
+
+**Latency:** the first 120b run spent much of its time waiting out the 8,000 tokens/min limit (70 rate-limit retries), so
+its times (median 5.8 s) measure the free tier, not the model, and aren't used. The recorder now subtracts rate-limit
+waits (`waited_ms` is kept separately), and the 120b figure comes from a separate 20-case sample with pauses between cases
+(20/20 passed; 21 calls, one of them a repair).
+
+## Phase 4 · What the evaluation found
+| What | How it showed up | Outcome |
+|---|---|---|
+| **The validator accepted a rule comparing something with itself** ("SMA 20 crosses above SMA 20", which can never fire). The form could save it too | 120b's first full run: 59/60, with case v01 ("Buy on a golden cross") failing at 99.5% bar agreement | `spec.validate` rejects identical sides (+1 test). On the re-run the validator rejected that answer, the repair round sent the error back, and the model answered the 50/200 cross: **60/60** |
+| CI noticed the change | The committed recording no longer replayed (v01 now needed a repair round that wasn't recorded) | Re-recorded with `--reuse`: 1 live call instead of a ~130,000-token run |
+| Rate-limit waits counted as model latency | 70 retries in the first run's log; slowest "call" 21 s, fastest 0.9 s | Waits excluded from latency and recorded separately |
+| The smaller model misreads or quietly bends requests | 20b comparison above | gpt-oss-120b stays the default (D-085) |
+
+## Phase 4 · Ablation (partial)
+The planned ablation (bare prompt → + catalog → + examples → + repair) was cut short: the bare-prompt run used up
+gpt-oss-20b's 200,000 daily tokens after 52 of 60 cases, and was stopped (D-086). Its 52 cases cover all 42 strategy cases
+and the first 10 unsupported ones. **This result is not recorded and can't be replayed in CI.**
+
+| gpt-oss-20b, same 52 cases | Passed | Notes |
+|---|---|---|
+| Bare prompt (format only, with repair) | 28/52 (54%) | 8 strategies refused, 6 still invalid after 2 repair rounds, 10 wrong behaviour |
+| Full prompt (catalog, semantics, examples) | 49/52 (94%) | from the recorded full run |
+
+"No repair" for the full prompt comes from the recorded runs at temperature 0: 59/60 (120b) and 57/60 (20b).
+
+## Phase 4 · Bugs and surprises found while building
+| What | Found by | Outcome |
+|---|---|---|
+| A new worker-loop test hung **on Postgres only** (CPU-bound, no DB connection) | The Postgres suite didn't finish in 10 minutes | The loop's `close_old_connections()` closes a test's transaction on Postgres; every iteration then failed and retried. The test now patches it (as older worker tests do) and caps the loop |
+| The builder test catalog has no `ema`, so a test answer using it crashed the form | Frontend test | Test changed to RSI (the real catalog has all 8 indicators) |
+| Two account tests compared the whole quota dict | Full suite | Expectations gain `ai_requests_per_day` |
+
+## Phase 4 · Observations
+- **The validator is the safety net, the evaluation is the quality check.** Every answer from both models was valid on the
+  first try, yet 3 of 20b's were the wrong strategy. Validity is necessary, not sufficient, which is why a person reviews
+  the filled form.
+- **The evaluation paid for itself on its first run** by finding a validator bug that also affected hand-built strategies.
+- **Free tiers shape the method:** tokens per minute set the pace (~4 cases/min), tokens per day set how many full runs
+  fit (one per model), so re-runs reuse recorded answers.

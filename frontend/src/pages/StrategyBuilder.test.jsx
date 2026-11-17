@@ -121,6 +121,58 @@ describe("StrategyBuilder", () => {
     expect(screen.queryByText("strategy list page")).toBeNull();
   });
 
+  it("hides the AI panel when the deployment has no AI", async () => {
+    renderAt("/strategies/new");
+    expect(await screen.findByText("Buy when")).toBeTruthy();
+    expect(screen.queryByLabelText("Describe your strategy in words")).toBeNull();
+  });
+
+  it("fills the form from a description and shows the AI's notes", async () => {
+    const AI_SPEC = {
+      version: 1,
+      entry: { all: [{ left: { ind: "rsi", params: { period: 9 }, output: "value" }, op: "crosses_below", right: { const: 30 } }] },
+      exit: { any: [{ left: { ind: "rsi", params: { period: 9 }, output: "value" }, op: ">", right: { const: 70 } }] },
+    };
+    const queued = { id: 5, status: "queued" };
+    const done = { id: 5, status: "completed", outcome: "spec", cached: false, result: { spec: AI_SPEC, name: "RSI 9 dip", notes: ["Set a 3% stop-loss when you start the backtest."] } };
+    const get = api.get.getMockImplementation();
+    api.get.mockImplementation((url) =>
+      url === "/strategies/catalog/" ? Promise.resolve({ data: { ...CATALOG, ai_enabled: true } })
+        : url === "/assist/5/" ? Promise.resolve({ data: done }) : get(url));
+    const post = api.post.getMockImplementation();
+    api.post.mockImplementation((url, body) => (url === "/assist/strategy/" ? Promise.resolve({ data: queued }) : post(url, body)));
+
+    const user = renderAt("/strategies/new");
+    const box = await screen.findByLabelText("Describe your strategy in words");
+    expect(screen.getByRole("button", { name: "Fill in the rules" }).disabled).toBe(true); // too short to send
+    await user.type(box, "Buy RSI 9 dips under 30, sell above 70, 3% stop");
+    await user.click(screen.getByRole("button", { name: "Fill in the rules" }));
+
+    expect(await screen.findByText("Set a 3% stop-loss when you start the backtest.")).toBeTruthy();
+    expect(api.post).toHaveBeenCalledWith("/assist/strategy/", { prompt: "Buy RSI 9 dips under 30, sell above 70, 3% stop" });
+    expect(screen.getByLabelText("entry condition 1 left indicator").value).toBe("rsi");
+    expect(screen.getByLabelText("entry condition 1 left period").value).toBe("9");
+    expect(screen.getByLabelText("entry condition 1 operator").value).toBe("crosses_below");
+    expect(screen.getByLabelText("exit condition 1 right number").value).toBe("70");
+    expect(screen.getByLabelText("Name").value).toBe("RSI 9 dip");
+    expect(api.post.mock.calls.some(([u]) => u === "/strategies/")).toBe(false); // nothing saved by the AI
+  });
+
+  it("shows a refusal instead of changing the form", async () => {
+    const refused = { id: 6, status: "completed", outcome: "unsupported", cached: true, result: { reason: "Short selling isn't supported." } };
+    const get = api.get.getMockImplementation();
+    api.get.mockImplementation((url) =>
+      url === "/strategies/catalog/" ? Promise.resolve({ data: { ...CATALOG, ai_enabled: true } }) : get(url));
+    const post = api.post.getMockImplementation();
+    api.post.mockImplementation((url, body) => (url === "/assist/strategy/" ? Promise.resolve({ data: refused }) : post(url, body)));
+
+    const user = renderAt("/strategies/new");
+    await user.type(await screen.findByLabelText("Describe your strategy in words"), "Short it when RSI is above 80");
+    await user.click(screen.getByRole("button", { name: "Fill in the rules" }));
+    expect(await screen.findByText(/Short selling isn't supported\./)).toBeTruthy();
+    expect(screen.getByLabelText("entry condition 1 left indicator").value).toBe("sma"); // the blank form, untouched
+  });
+
   it("opens a template as an editable copy", async () => {
     renderAt("/strategies/new?from=7");
     await waitFor(() => expect(screen.getByLabelText("Name").value).toBe("EMA Crossover (12/26) (copy)"));
