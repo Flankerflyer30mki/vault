@@ -247,3 +247,42 @@ A "Describe your strategy in words" panel at the top of the builder (only when A
 - **New env vars (optional; AI is off without them):** `AI_PROVIDER=groq`, `GROQ_API_KEY` (secret; on the API and the worker), `AI_MODEL`, `AI_REASONING_EFFORT`, `AI_DAILY_TOKEN_BUDGET` (below the provider's daily token limit), `AI_MAX_PROMPT_CHARS`, `AI_MAX_REPAIRS`, `AI_TIMEOUT_S`, `AI_MAX_OUTPUT_TOKENS`, `AI_MAX_QUEUED`, `AI_CACHE_DAYS`, `AI_RETENTION_DAYS`, `AI_STALE_AFTER_S`; `QUOTA_<TIER>_AI_REQUESTS_PER_DAY`.
 - In the Groq console: switch on Zero Data Retention.
 - No new Python dependency (the Groq API is called with `requests`).
+
+---
+
+## Phase 5 · AI research agent · branch `phase-5-agent` · 2026-11-17
+
+### Behavior changes
+| Area | Before | After | Decision |
+|---|---|---|---|
+| Research | The user builds, compares and optimizes by hand | "AI research": a goal → the agent proposes, backtests, refines and chooses; code tests the choice once on a held-out period; a report with checks | D-088 to D-092 |
+| Worker | AI requests, then backtests | AI requests, then one research step, then a backtest; a finished research round wakes its run | D-090 |
+| Strategies | All built-ins visible | Hidden built-ins (`is_hidden`) are never listed or runnable by users | D-095 |
+| Experiments | optimization, comparison | Plus `research` rounds, excluded from experiment lists, the dashboard and the experiments quota | D-095 |
+| Quotas | — | `research_per_day` (guest 0 / unverified 1 / verified 3), one research run at a time, counted as one active job | D-093 |
+| AI budget | Assistant tokens | Assistant + research tokens share the daily budget | D-093 |
+
+### API
+- **New:** `GET/POST /api/research/` (start: `goal`, `symbol`, `start_date`, `end_date`, `objective`, `max_drawdown_pct`, `starting_cash`, `cost_model`; 503 when AI is off or over budget, 429 for quotas, 400 for under 730 days), `GET /api/research/<id>/` (run, budgets, timeline of steps, candidates with in-sample metrics, report).
+- **Changed:** `/api/experiments/` and the dashboard no longer list research rounds; dashboard quota gains `research_per_day`.
+
+### UI
+New **Research** page (`/research`: goal form, list of runs) and `/research/<id>`: stage bar, budgets used, the report (research vs held-out results, buy & hold, whether it beat buy & hold, the agent's summary, process checks), the candidates table (each links to its backtest; "Save as strategy"), and the timeline of the agent's actions with its reasons and any rejected actions. Nav gains "Research".
+
+### Database
+| Migration | What | Reversible |
+|---|---|---|
+| `backtester.0022_research` | `Strategy.is_hidden`; experiment kind `research` | yes |
+| `backtester.0023_research_candidate` | seeds the hidden "AI research candidate" strategy | yes (removes it if unused) |
+| `assist.0002_research` | `ResearchRun` (goal, period, split, objective, constraint, status, stage, state, rounds, report, budgets used, worker, request ID; claim index) and `ResearchStep` (timeline) | yes |
+
+### Files
+- **New** `backend/assist/agent.py` (prompts, action checks, grounding), `research.py` (state machine, rounds, held-out test, report, queue), `research_urls.py`, `test_research.py` (18 tests); `assist/models.py`, `serializers.py`, `views.py`, `jobs.py` (shared token budget)
+- `backend/backtester/models.py` (`is_hidden`, `research` kind), `jobs.py` (worker loop, wake on round finished), `views.py` (research rounds excluded), migrations `0022`, `0023`; `backend/accounts/quotas.py` (`check_research`, usage, hidden strategies), `tests.py`; `backend/vault_core/settings.py` (`RESEARCH`, quotas, schema enum names), `urls.py`
+- **New** `frontend/src/pages/Research.jsx`, `ResearchDetail.jsx`, `ResearchPages.test.jsx` (5 tests), `src/research.js`; `App.jsx`, `App.css`, `pages/Dashboard.jsx`
+- `README.md`, `CLAUDE.md`, `docs/*`
+
+### Operational notes for release
+- **New env vars (optional):** `RESEARCH_MAX_STEPS`, `RESEARCH_MAX_MODEL_CALLS`, `RESEARCH_MAX_BACKTESTS`, `RESEARCH_MAX_TOKENS`, `RESEARCH_MAX_CANDIDATES_PER_ROUND`, `RESEARCH_MAX_SEARCH_VALUES`, `RESEARCH_MIN_TRADES`, `RESEARCH_MIN_DAYS`, `RESEARCH_STALE_AFTER_S`, `RESEARCH_MAX_ATTEMPTS`; `QUOTA_<TIER>_RESEARCH_PER_DAY`. Research needs the Phase 4 AI settings.
+- **Not yet run against a real model** (D-094): do one live research run on staging before announcing it.
+- A research run costs roughly 10–40K tokens; with the free tier's 200K a day per model, plan for a handful of runs a day.

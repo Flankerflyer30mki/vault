@@ -27,6 +27,7 @@ timing. Decisions behind each change are in [decisions.md](decisions.md).
 | Rule comparing something with itself (never fires) | accepted by the validator | **rejected; found by the AI evaluation** | 4 |
 | AI prompt: catalog + examples vs format only (gpt-oss-20b, 52 cases) | 54% | **94%** | 4 |
 | Re-measuring the AI after a change | ~130,000 tokens, ~20 min | **1 model call** (`--reuse`) | 4 |
+| From a goal to a tested strategy | by hand, idea by idea | **AI research agent; held-out test by code, exactly once** (tests only, no live run yet) | 5 |
 
 ---
 
@@ -331,3 +332,37 @@ the platform kills it 30 s later.
 | Before | Change | Result |
 |---|---|---|
 | A new worker-loop test hung on Postgres only (CPU spinning, no DB connection) | Found that `close_old_connections()` closes a test's transaction on Postgres; patched it in the test and capped the loop | Postgres suite 187/187 in 43.6 s; a regression can no longer hang CI |
+
+---
+
+# Phase 5 · AI research agent
+
+*Not run against a real model yet (D-094): results below are from tests with a scripted model and real backtests.*
+
+### 5.1 · From one strategy to a researched answer
+**Why:** finding a strategy means trying ideas, comparing them and refining the good ones: tedious by hand.
+1. **Before:** the user built, compared and optimized each idea by hand (Phase 4 drafts one strategy at a time).
+2. **Changes made:** a research agent that proposes candidates, backtests them as rounds, refines with parameter searches and chooses, inside fixed stages and hard budgets (D-088, D-089, D-093).
+3. **Result:** a complete run in the tests: 4 decisions, 5 backtests, 5 model calls, a report with process checks; every rejected action returned to the agent with path-keyed errors *(18 tests)*.
+
+### 5.2 · Honest about its own overfitting
+**Why:** an agent that tries many strategies on the same data will find a lucky one; the research number alone misleads.
+1. **Before:** nothing stopped a search from reporting its best in-sample result as if it were real.
+2. **Changes made:** the last 30% is held out; the agent never sees it (its prompts are checked on every step); code tests the choice once there and reports it next to buy & hold, with the number of candidates tried (D-091).
+3. **Result:** held-out tested exactly once, agent prompts never contain those dates, all candidate backtests end before the split *(tests, plus a check in every report)*.
+
+### 5.3 · An agent that doesn't hold a worker
+1. **Before (design risk):** an agent waiting on its own backtests would block the worker they need; with one worker, for ever.
+2. **Changes made:** a resumable state machine: one short step per claim; `waiting` while its round runs; woken when the round finishes (D-090).
+3. **Result:** while backtests run, research needs no worker; a crashed step resumes from saved state; shutdown re-queues without using an attempt *(tests)*.
+
+### 5.4 · A summary that can't invent numbers
+1. **Before:** model-written summaries can state figures that were never computed.
+2. **Changes made:** every number in the agent's summary must appear in the facts; one rewrite, then a plain code-written summary (D-092).
+3. **Result:** an invented "987.6%" and "Sharpe 9.99" were caught, the rewrite request named both, and the plain summary replaced them *(test)*.
+
+### 5.5 · Smaller fixes found by tests
+| Before | Change | Result |
+|---|---|---|
+| A step re-queued after a crash while its backtests ran asked the agent about unfinished results; the run failed | Such a step goes back to `waiting` without a model call | Crash-and-resume test completes the run *(test)* |
+| A migration that both seeds a row and alters a table couldn't be rolled back on Postgres | Split into schema (`0022`) and data (`0023`) | Postgres suite 205/205 including the migration rollback test |

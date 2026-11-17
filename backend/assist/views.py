@@ -10,8 +10,9 @@ from rest_framework.views import APIView
 
 from accounts import quotas
 from assist import jobs, prompts, providers
-from assist.models import AssistRequest
-from assist.serializers import AssistCreateSerializer, AssistRequestSerializer
+from assist.models import AssistRequest, ResearchRun
+from assist.serializers import (AssistCreateSerializer, AssistRequestSerializer, ResearchCreateSerializer,
+                                ResearchDetailSerializer, ResearchRunSerializer)
 from backtester.views import Throttled
 
 
@@ -50,6 +51,42 @@ class AssistStrategyView(Throttled, APIView):
                     raise AIUnavailable("The AI queue is full. Try again in a minute.")
                 req = AssistRequest.objects.create(owner=request.user, prompt=text, prompt_hash=h)
         return Response(AssistRequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+
+class ResearchListCreateView(Throttled, generics.ListAPIView):
+    """POST starts an AI research run (Phase 5, D-088); the worker drives it step by step. GET lists your runs."""
+    write_scope = "jobs"
+    serializer_class = ResearchRunSerializer
+
+    def get_queryset(self):
+        return ResearchRun.objects.filter(owner=self.request.user).order_by("-created_at")
+
+    @extend_schema(request=ResearchCreateSerializer, responses={201: ResearchRunSerializer})
+    def post(self, request):
+        if not providers.enabled():
+            raise AIUnavailable(jobs.NOT_CONFIGURED)
+        ser = ResearchCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
+            quotas.check_research(request.user)
+            if jobs.over_budget():
+                raise AIUnavailable(jobs.OVER_BUDGET)
+            run = ResearchRun.objects.create(
+                owner=request.user, goal=d["goal"], symbol=d["symbol"], start_date=d["start_date"],
+                end_date=d["end_date"], split_date=d["split_date"], objective=d["objective"],
+                max_drawdown=None if d.get("max_drawdown_pct") is None else d["max_drawdown_pct"] / 100,
+                starting_cash=d["starting_cash"], cost_model=d["cost_model"])
+        return Response(ResearchRunSerializer(run).data, status=status.HTTP_201_CREATED)
+
+
+class ResearchDetailView(Throttled, generics.RetrieveAPIView):
+    """The run with its timeline, the candidates tested (in-sample results) and, when done, the report."""
+    serializer_class = ResearchDetailSerializer
+
+    def get_queryset(self):
+        return ResearchRun.objects.filter(owner=self.request.user).prefetch_related("steps")
 
 
 class AssistDetailView(Throttled, generics.RetrieveAPIView):

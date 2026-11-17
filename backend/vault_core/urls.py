@@ -48,6 +48,7 @@ urlpatterns = [
     path("metrics", metrics),
     path("api/auth/", include("accounts.urls")),
     path("api/assist/", include("assist.urls")),
+    path("api/research/", include("assist.research_urls")),
     path("api/", include("backtester.urls")),
 ]
 

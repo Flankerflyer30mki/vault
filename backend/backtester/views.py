@@ -235,9 +235,10 @@ class ExperimentListCreateView(Throttled, IdempotentCreate, generics.ListCreateA
 
     def get_queryset(self):
         # Status is derived from the child runs; load only what experiment_status reads, never the curves.
-        qs = Experiment.objects.filter(owner=self.request.user).select_related("strategy").prefetch_related(
-            Prefetch("runs", queryset=BacktestRun.objects.only("id", "experiment_id", "status", "sample"))
-        ).order_by("-created_at")
+        qs = Experiment.objects.filter(owner=self.request.user).exclude(kind=Experiment.RESEARCH) \
+            .select_related("strategy").prefetch_related(
+                Prefetch("runs", queryset=BacktestRun.objects.only("id", "experiment_id", "status", "sample"))
+            ).order_by("-created_at")
         return qs.filter(kind=self.default_kind) if self.default_kind else qs
 
     def perform_create(self, serializer, key):
@@ -318,8 +319,9 @@ class ExperimentDetailView(Throttled, generics.RetrieveAPIView):
     serializer_class = ExperimentSerializer
 
     def get_queryset(self):
-        return Experiment.objects.filter(owner=self.request.user).select_related("strategy") \
-            .prefetch_related("runs__strategy")
+        # Research rounds are read through their research run (assist.views), not as experiments.
+        return Experiment.objects.filter(owner=self.request.user).exclude(kind=Experiment.RESEARCH) \
+            .select_related("strategy").prefetch_related("runs__strategy")
 
     def retrieve(self, request, *args, **kwargs):
         job = self.get_object()
@@ -375,7 +377,8 @@ class DashboardView(Throttled, APIView):
         active = list(runs.filter(experiment__isnull=True, status__in=BacktestRun.ACTIVE).order_by("-created_at"))
         recent = list(runs.filter(experiment__isnull=True).exclude(status__in=BacktestRun.ACTIVE)
                       .order_by("-created_at")[:10])
-        exps = list(Experiment.objects.filter(owner=user).select_related("strategy").prefetch_related(
+        exps = list(Experiment.objects.filter(owner=user).exclude(kind=Experiment.RESEARCH)
+                    .select_related("strategy").prefetch_related(
             Prefetch("runs", queryset=BacktestRun.objects.only(
                 "id", "experiment_id", "status", "sample", "sharpe_ratio", "final_value", "starting_cash",
                 "buy_and_hold_return", "stop_loss_pct", "take_profit_pct", "grid_params")))

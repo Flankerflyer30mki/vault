@@ -175,11 +175,11 @@ VAULT = {
     "QUOTAS": {tier: {k: env_int(f"QUOTA_{tier.upper()}_{k.upper()}", v) for k, v in defaults.items()}
                for tier, defaults in {
                    "guest": {"active_jobs": 2, "runs_per_day": 20, "experiments_per_day": 2, "strategies": 5,
-                             "ai_requests_per_day": 5},
+                             "ai_requests_per_day": 5, "research_per_day": 0},
                    "unverified": {"active_jobs": 3, "runs_per_day": 30, "experiments_per_day": 3, "strategies": 20,
-                                  "ai_requests_per_day": 10},
+                                  "ai_requests_per_day": 10, "research_per_day": 1},
                    "verified": {"active_jobs": 10, "runs_per_day": 200, "experiments_per_day": 20, "strategies": 100,
-                                "ai_requests_per_day": 50},
+                                "ai_requests_per_day": 50, "research_per_day": 3},
                }.items()},
 }
 
@@ -199,6 +199,20 @@ AI = {
     "CACHE_DAYS": env_int("AI_CACHE_DAYS", 7),
     "RETENTION_DAYS": env_int("AI_RETENTION_DAYS", 30),
     "STALE_AFTER_S": env_int("AI_STALE_AFTER_S", 180),
+}
+
+# --- AI research agent (Phase 5, D-088 to D-095). Uses the AI provider above; hard budgets per research run.
+RESEARCH = {
+    "MAX_STEPS": env_int("RESEARCH_MAX_STEPS", 8),            # agent decisions (model calls, not counting repairs)
+    "MAX_MODEL_CALLS": env_int("RESEARCH_MAX_MODEL_CALLS", 14),  # including repairs and the report
+    "MAX_BACKTESTS": env_int("RESEARCH_MAX_BACKTESTS", 40),   # in-sample backtests the agent may queue
+    "MAX_TOKENS": env_int("RESEARCH_MAX_TOKENS", 40_000),
+    "MAX_CANDIDATES_PER_ROUND": env_int("RESEARCH_MAX_CANDIDATES_PER_ROUND", 6),
+    "MAX_SEARCH_VALUES": env_int("RESEARCH_MAX_SEARCH_VALUES", 6),
+    "MIN_TRADES": env_int("RESEARCH_MIN_TRADES", 3),          # fewer round trips in-sample: not eligible to win
+    "MIN_DAYS": env_int("RESEARCH_MIN_DAYS", 730),            # research period, so both parts have enough bars
+    "STALE_AFTER_S": env_int("RESEARCH_STALE_AFTER_S", 300),
+    "MAX_ATTEMPTS": env_int("RESEARCH_MAX_ATTEMPTS", 3),
 }
 
 # --- Observability (D-069 to D-073)
@@ -234,6 +248,9 @@ SPECTACULAR_SETTINGS = {
         "ExperimentStatusEnum": ["running", "completed", "partially_completed", "failed"],
         "StrategyKindEnum": "backtester.models.Strategy.KIND_CHOICES",
         "ExperimentKindEnum": "backtester.models.Experiment.KIND_CHOICES",
+        "AssistStatusEnum": "assist.models.AssistRequest.STATUS_CHOICES",
+        "ResearchStatusEnum": "assist.models.ResearchRun.STATUS_CHOICES",
+        "ResearchStageEnum": "assist.models.ResearchRun.STAGE_CHOICES",
     },
 }
 

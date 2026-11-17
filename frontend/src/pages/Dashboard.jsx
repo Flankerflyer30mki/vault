@@ -10,6 +10,7 @@ const QUOTA_LABELS = {
   experiments_per_day: "Comparisons + optimizations (last 24 h)",
   strategies: "Saved strategies",
   ai_requests_per_day: "AI requests (last 24 h)",
+  research_per_day: "AI research runs (last 24 h)",
 };
 
 function QuotaBar({ label, used, limit }) {

@@ -44,8 +44,12 @@ def cached_answer(h):
 
 
 def tokens_today():
+    """Assistant requests plus research steps: one budget for all AI use (D-081, D-093)."""
+    from assist.models import ResearchStep
     start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return A.objects.filter(created_at__gte=start).aggregate(t=Sum(F("tokens_in") + F("tokens_out")))["t"] or 0
+    total = F("tokens_in") + F("tokens_out")
+    return ((A.objects.filter(created_at__gte=start).aggregate(t=Sum(total))["t"] or 0)
+            + (ResearchStep.objects.filter(created_at__gte=start).aggregate(t=Sum(total))["t"] or 0))
 
 
 def over_budget():
