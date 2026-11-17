@@ -17,6 +17,7 @@ Vault runs a trading strategy against historical daily market data and reports r
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
 - [Experiments: comparisons and optimizations](#experiments-comparisons-and-optimizations)
 - [Accounts and workspaces](#accounts-and-workspaces)
+- [Operations: logs, metrics, capacity](#operations-logs-metrics-capacity)
 - [Security](#security)
 - [Run locally](#run-locally)
 - [Tests](#tests)
@@ -158,6 +159,7 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 - **Claim order.** Workers claim `ORDER BY priority, id`: runs a person starts by hand (priority 0) go before experiment children (priority 1), first-in-first-out within each lane. Nothing is pre-empted; a running job always finishes. Measured: a hand-started run behind a 25-child batch starts in 25 ms instead of 1.26 s.
 - **Stale-job recovery.** Workers update a heartbeat at most once per second while a run is in progress (a run that finishes in under a second writes none). A run with no heartbeat for `STALE_AFTER_S` (120 s) goes back to `queued`, up to `MAX_ATTEMPTS` (3) attempts in total, and then fails as `infrastructure`.
 - **Per-worker caches.** Each worker keeps a small LRU of loaded bars (keyed by symbol, dates, warm-up and the coverage's `fetched_at`, so a re-download is never served stale) and of indicator series (keyed by the data hash). Children of one experiment share them; results are identical with or without the cache.
+- **Graceful shutdown.** On `SIGTERM` (a deploy or restart) a worker stops claiming new runs and lets the current one finish for up to `WORKER_GRACE_S` (20 s, under Render's 30 s kill window). A run still going after that goes straight back to `queued` without using an attempt, instead of waiting 120–150 s for stale recovery. Measured with a real worker process: back in the queue 2.26 s after `SIGTERM` with a 2 s grace.
 - **Strategy errors are not retried.** An exception, a bad return value or a timeout fails the run immediately with a safe message.
 - **Bounded concurrency.** Each worker process runs one job at a time. To scale, run more worker processes. The API never starts threads or subprocesses.
 - **Progress** is stored on the run row (`bars_processed / bars_total`). The UI shows "progress not available" rather than a fake 0%.
@@ -174,7 +176,7 @@ Scope: Vault handles daily bars for single Yahoo tickers. It does not model corp
 | builder spec | 1–10 conditions per group, periods 2–200, 8 KB, warm-up ≤ 600 bars | per builder strategy |
 | `RUN_TIMEOUT_S` / `RUN_CPU_S` / `RUN_MEMORY_MB` | 60 / 30 / 256 | per strategy process |
 | request body | 64 KB | per request |
-| `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per user** when signed in, per API process (in-memory cache) |
+| `THROTTLE_JOBS` / `THROTTLE_WRITE` / `THROTTLE_READ` | 10 / 30 / 300 per min | **per user** when signed in. Counters are shared by every API process and instance (Postgres table `vault_cache`) |
 | `THROTTLE_AUTH` / `THROTTLE_GUEST` | 10 per min / 5 per hour | **per IP**: login, signup and password reset / guest creation |
 | Per-user quotas | see [Accounts](#accounts-and-workspaces) | active jobs, backtests and experiments per rolling 24 h, by tier. The API returns `429` naming the limit |
 | `NUM_PROXIES` | 1 on Render, else 0 (compose sets 1 for its nginx) | proxies in front of the API. Throttling identifies the client from the address the last trusted proxy appended, so a client cannot dodge limits by sending its own `X-Forwarded-For` |
@@ -214,6 +216,37 @@ An experiment (comparison or optimization) counts as one active job while any of
 - **Housekeeping:** the worker deletes expired guests and expired sessions once an hour, so no cron job is needed.
 - **Pre-accounts data:** runs, optimizations and custom strategies created before accounts existed belong to a hidden, inactive legacy user (migration `0014`).
 - **Endpoints** (`/api/auth/`): `csrf`, `me`, `signup`, `login`, `logout`, `guest`, `guest/convert`, `verify-email`, `verify-email/resend`, `password-reset`, `password-reset/confirm`, `password-change`, `email-change` and `delete-account`. `/api/dashboard/` returns everything the dashboard shows in one call.
+
+## Operations: logs, metrics, capacity
+
+- **Request IDs.** Every response carries `X-Request-ID` (a valid incoming one is kept, anything else replaced). The ID is on every log line written during the request and is stored on the runs and experiments the request created. The worker logs with both `request_id` and `run_id`, so "this click → this run → this worker error" is one search. The UI shows the ID in server-error messages so a user can quote it.
+- **Logs** are JSON lines (`LOG_FORMAT=text` for reading locally). One access line per request: method, **route pattern** (never the raw URL, so no IDs or tokens from paths), status, duration and user ID; no emails. Health checks and `/metrics` aren't logged. This replaces gunicorn's access log.
+- **Metrics:** `GET /metrics` in Prometheus text format, disabled (404) unless `METRICS_TOKEN` is set, then requires `Authorization: Bearer <token>`. It has HTTP rate, errors and duration by route (**per API process**: each scrape sees the process that answered), and **queue health computed from the database** (valid across all processes): queued runs by lane (interactive/batch), age of the oldest queued run, active runs, completions and failures by category in the last hour, run-time p50/p95, and stale runs.
+- **API docs:** OpenAPI schema at `/api/schema/` and Swagger UI at `/api/docs/` (bundled, no CDN). On by default with `DEBUG`, otherwise only with `API_DOCS=1`. CI fails if the schema has any warning, so every endpoint is documented.
+- **Error tracking:** Sentry, only if `SENTRY_DSN` is set (`SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` optional). Personal data is never sent (`send_default_pii=False`).
+- **Rate limits are shared.** Throttle counters live in the Postgres table `vault_cache` (migration `0021`), written with one upsert per request; the worker's hourly housekeeping deletes expired rows. `THROTTLE_CACHE=locmem|django` exist only for load-test comparisons.
+
+**Capacity** (measured locally, see [docs/evals.md](docs/evals.md#phase-35--engineering-hardening); repeat on staging before relying on it). API container limited to 0.5 CPU and 512 MB like a small Render instance, 2 gunicorn processes, `DEBUG=0`, Postgres 16, Locust users browsing and starting runs with no failures:
+
+| Users | Requests/s | p50 | p95 |
+|---|---|---|---|
+| 10 | 30 | 28 ms | 110 ms |
+| 20 | 48 | 98 ms | 380 ms |
+| 40 | 52 | 460 ms | 760 ms |
+| 80 | 55 | 1.2 s | 1.4 s |
+
+The API saturates around **50 requests/s; latency climbs past ~20 concurrent active users**. That's the point to add CPU or instances. These are single runs on a shared machine; identical repeats differed by up to a third in throughput at 20 users. Workers: one worker process completed **537 builder runs/min** (EMA crossover, ~2,900 bars), 2 workers 964, 4 workers 1,263 (sharing the machine's CPU and Postgres). Claiming a run takes ~8–12 ms median whether 100 or 100,000 runs are queued (the claim index is used).
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `METRICS_TOKEN` | unset (endpoint off) | bearer token for `/metrics` |
+| `API_DOCS` | on with `DEBUG`, else off | serve `/api/schema/` and `/api/docs/` |
+| `SENTRY_DSN` | unset (off) | error tracking |
+| `LOG_FORMAT` | `json` | `text` for local reading |
+| `WORKER_GRACE_S` | 20 | seconds a worker may finish its run after `SIGTERM` |
+| `THROTTLE_CACHE` | `upsert` | throttle counter store; leave as is outside load tests |
+
+**Load test** (dev only): `pip install -r requirements-dev.txt`, then `locust -f loadtest/locustfile.py --host http://<api>`. Each simulated user creates a guest, so raise `THROTTLE_*` and `QUOTA_GUEST_*` on the target, and never point it at production.
 
 ## Security
 
@@ -273,7 +306,7 @@ DEBUG=1 DATABASE_URL=sqlite:///:memory: python manage.py test
 cd ../frontend && npm test        # Vitest + React Testing Library (jsdom)
 ```
 
-CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pip-audit`, frontend lint, tests and build, `npm audit` and both Docker builds. Measured results for every phase are in [docs/evals.md](docs/evals.md). The suite covers:
+CI also runs the suite on PostgreSQL 16, along with a migration-drift check, an OpenAPI schema check (no warnings allowed), `pip-audit`, frontend lint, tests and build, `npm audit` and both Docker builds. Measured results for every phase are in [docs/evals.md](docs/evals.md). The suite covers:
 
 - a hand-calculated buy/sell with commission and slippage
 - the equity = cash + holdings invariant
@@ -304,6 +337,7 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, `pi
 - queue and worker: **priority lanes** (a hand-started run claimed before older batch children), **4 real worker threads on Postgres never claiming a run twice**, worker caches giving identical results and never serving bars after a re-download, time-based heartbeat (no writes for fast runs, still beating for slow ones)
 - curve downsampling keeping extremes and ends, the new metrics hand-checked, tunable-parameter grouping
 - frontend: comparison form (cell count and limits, request body), experiment page (heatmap values and colours, benchmark row, failures, metric switch; optimization columns and skipped combinations)
+- operations: JSON log lines with request and run IDs, request IDs kept or replaced and stored on runs, the access line using the route pattern, `/metrics` (off without a token, Bearer check, queue health), throttle counters shared between cache instances and written in one statement, expired cache rows removed, the OpenAPI schema generated without warnings, and graceful shutdown (no claims after `SIGTERM`, a run past the grace period requeued without using an attempt)
 
 ## Deploy (Vercel + Render)
 
@@ -321,9 +355,9 @@ Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Tu
 | Env | `SECRET_KEY` (generate), `DATABASE_URL` (from Render Postgres), `ALLOWED_HOSTS=<api-host>`, `CSRF_TRUSTED_ORIGINS=https://<vercel-domain>`, `FRONTEND_URL=https://<vercel-domain>` (links in emails), `SECURE_PROXY_SSL_HEADER=1`, `DB_SSLMODE=require` |
 | Email | `EMAIL_HOST`, `EMAIL_PORT` (587), `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` (any SMTP provider, e.g. Resend). Without `EMAIL_HOST`, emails go to the log |
 | Check on staging | `NUM_PROXIES`: requests now arrive through Vercel and then Render's proxy. Inspect a real `X-Forwarded-For` chain and set the count to match |
-| Optional | `SECURE_HSTS_SECONDS=31536000` once HTTPS is verified, `WEB_CONCURRENCY`, and the limits listed above |
+| Optional | `SECURE_HSTS_SECONDS=31536000` once HTTPS is verified, `WEB_CONCURRENCY`, `METRICS_TOKEN`, `SENTRY_DSN`, and the limits listed above |
 
-**Worker (Render background worker, same repo and image):** command `python manage.py run_worker`, with the same env as the API minus the HTTP-only settings.
+**Worker (Render background worker, same repo and image):** command `python manage.py run_worker`, with the same env as the API minus the HTTP-only settings. Keep `WORKER_GRACE_S` below the platform's shutdown window (Render: 30 s).
 
 **No budget for a separate worker?** Set `EMBEDDED_WORKER=1` on the web service. Each gunicorn process then starts one queue-consumer thread. Jobs stay durable because the queue is in Postgres, but backtests then compete with HTTP traffic for CPU. On a free plan that sleeps when idle, queued jobs wait until the service wakes, and interrupted jobs are recovered as stale.
 
@@ -366,6 +400,8 @@ After deploy, watch Logs and Events for the same signature over several hours be
 
 **Other procedures:**
 
+- *A user reports an error:* ask for the request ID shown in the message and search the logs for it. The run (if any) has the same `request_id`, and the worker's lines for it carry its `run_id`.
+- *Is the queue healthy?* `curl -H "Authorization: Bearer $METRICS_TOKEN" https://<api-host>/metrics`: `vault_queue_depth`, `vault_queue_oldest_age_seconds` and `vault_runs_stale` show a backlog or a dead worker.
 - *A job looks stuck:* check `status`, `heartbeat_at`, `attempts` and `worker_id` on the run. Recovery runs every 30 s in each worker. It also queues the out-of-sample run for any optimization whose in-sample runs have all finished. If no worker is running, jobs stay `queued`.
 - *Queue full (503):* there are more than `MAX_ACTIVE_RUNS` active runs. Add a worker or raise the limit.
 - *Database down:* `/health/ready` returns 503. API calls return a safe 500 or 503 without a stack trace. Workers log the error and keep polling. They drop broken connections at the top of each loop, so they reconnect once the database is back.
@@ -382,7 +418,8 @@ After deploy, watch Logs and Events for the same signature over several hours be
 ## Known limitations
 
 - There is no isolated strategy runner yet, so custom code is disabled on public deployments (see [Security](#security)).
-- Throttle counters are per API process (in-memory cache). Use a shared cache if you run more than one API instance.
+- HTTP metrics on `/metrics` are per API process (queue metrics are global). Summing across processes needs a scraper that reaches each one, or a shared metrics store.
+- In production the API docs page is served through Django with `API_DOCS=1` (fine for occasional use; it is off by default).
 - No "Sign in with Google" yet, and no multi-factor authentication.
 - Admission control (`MAX_ACTIVE_RUNS`) is a soft cap: concurrent requests can overshoot it slightly.
 - Strategies are long only, single asset, daily bars, with no shorting, leverage, dividends-as-cash or order types beyond market-on-open and stop/target.
@@ -390,6 +427,6 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - The India cost model covers percentage charges only (no DP charges or minimum brokerage), and its rates are fixed in code. Currency is inferred from the symbol for display only.
 - Rolling back migration `0016` rounds 9-decimal fee rates to 6 places and leaves builder strategies with no code.
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built (D-061).
-- Worker caches are per process: several workers each warm their own. An experiment's limit is 25 child runs until a load test (Phase 3.5) measures capacity.
+- Worker caches are per process: several workers each warm their own. An experiment's limit stays 25 child runs: a 25-child batch takes about 3 s on one worker, so the limit is about result readability, not capacity.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
-- No load test has been run, so there are no capacity numbers.
+- Capacity numbers come from a local machine with Render-like container limits, not from Render itself; repeat the load test on staging.

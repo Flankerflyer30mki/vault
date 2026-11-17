@@ -23,13 +23,42 @@ from django.conf import settings
 from django.db import IntegrityError, close_old_connections, transaction
 from django.utils import timezone
 
+from django.db.models import F
+
 from backtester import cache, engine, spec
 from backtester.data_fetch import DataError, load_bars
 from backtester.models import BacktestRun, Experiment, SymbolCoverage, Trade
 from backtester.sandbox_runner import StrategyProcess
+from vault_core.observability import request_id_var, run_id_var
 
 log = logging.getLogger(__name__)
 R = BacktestRun
+
+
+class Shutdown:
+    """Graceful stop (D-074). After a request the worker claims nothing new; the run in progress may finish until the
+    deadline, after which it's put back in the queue (see ShutdownRequested) instead of waiting for stale recovery."""
+
+    def __init__(self):
+        self.requested, self.deadline = False, None
+
+    def request(self, grace_s):
+        if not self.requested:
+            self.requested, self.deadline = True, time.monotonic() + grace_s
+            log.info("event=shutdown_requested grace_s=%s", grace_s)
+
+    def overdue(self):
+        return self.requested and time.monotonic() >= self.deadline
+
+    def reset(self):
+        self.requested, self.deadline = False, None
+
+
+SHUTDOWN = Shutdown()
+
+
+class ShutdownRequested(Exception):
+    """Raised from the progress callback when the grace period is over."""
 # Heartbeat (and progress) at most once per second. It used to be every 50 bars, sized for slow sandbox runs; with
 # interpreted builder strategies a run's simulation takes milliseconds, and those UPDATEs became ~70% of a child run's
 # time (profiled in Phase 3). Stale recovery waits STALE_AFTER_S (120 s), so 1 s is far more often than needed.
@@ -72,6 +101,14 @@ def claim(wid):
 def _update(run, wid, **fields):
     """Conditional update: only the worker that owns an active run may touch it. Returns True if applied."""
     return R.objects.filter(id=run.id, worker_id=wid, status__in=R.ACTIVE).update(**fields) == 1
+
+
+def requeue(run, wid):
+    """Shutdown overran the grace period: hand the run straight back to the queue. The attempt isn't counted (the
+    worker stopped, the run didn't fail), and no other worker has to wait STALE_AFTER_S to notice."""
+    if _update(run, wid, status=R.QUEUED, worker_id="", attempts=F("attempts") - 1, heartbeat_at=None,
+               bars_processed=None):
+        log.info("event=run_requeued_on_shutdown run=%s", run.id)
 
 
 def fail(run, wid, category, message):
@@ -124,6 +161,8 @@ def execute(run, wid):
 
     def progress(n):
         nonlocal last_beat
+        if SHUTDOWN.overdue():
+            raise ShutdownRequested()
         if time.monotonic() - last_beat >= HEARTBEAT_EVERY_S:
             last_beat = time.monotonic()
             _update(run, wid, bars_processed=n, heartbeat_at=timezone.now())
@@ -149,6 +188,8 @@ def execute(run, wid):
         result = engine.simulate(series, decide, params, warmup=len(warmup), on_progress=progress)
     except engine.StrategyError as e:
         return fail(run, wid, "strategy", str(e))
+    except ShutdownRequested:
+        return requeue(run, wid)
     finally:
         if proc:
             proc.close()
@@ -248,16 +289,24 @@ def experiment_status(job):
 
 def work_one(wid):
     """Process one job if available. Returns True if a job was processed."""
+    if SHUTDOWN.requested:
+        return False  # stopping: claim nothing new
     run = claim(wid)
     if run is None:
         return False
+    # Every log line about this run carries its ID and the ID of the request that created it (D-070).
+    tokens = (request_id_var.set(run.request_id or None), run_id_var.set(run.id))
     try:
-        execute(run, wid)
-    except Exception:
-        log.exception("event=run_crashed run=%s", run.id)
-        fail(run, wid, "infrastructure", "Internal error while running the backtest")
-    if run.experiment_id:
-        finish_optimization(run.experiment)
+        try:
+            execute(run, wid)
+        except Exception:
+            log.exception("event=run_crashed run=%s", run.id)
+            fail(run, wid, "infrastructure", "Internal error while running the backtest")
+        if run.experiment_id:
+            finish_optimization(run.experiment)
+    finally:
+        request_id_var.reset(tokens[0])
+        run_id_var.reset(tokens[1])
     return True
 
 
@@ -265,7 +314,7 @@ def work_forever(poll_s=2.0, stop=lambda: False):
     wid = worker_id()
     log.info("event=worker_started worker=%s", wid)
     last_recover = last_housekeeping = 0.0
-    while not stop():
+    while not stop() and not SHUTDOWN.requested:
         # Outside a request Django never recycles connections; without this a worker keeps a dead
         # connection forever after a database restart.
         close_old_connections()
@@ -282,5 +331,6 @@ def work_forever(poll_s=2.0, stop=lambda: False):
         except Exception:
             log.exception("event=worker_loop_error")
             busy = False
-        if not busy:
+        if not busy and not SHUTDOWN.requested:
             time.sleep(poll_s)
+    log.info("event=worker_stopped worker=%s", wid)

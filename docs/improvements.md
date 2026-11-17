@@ -18,6 +18,11 @@ timing. Decisions behind each change are in [decisions.md](decisions.md).
 | Known vulnerabilities (`pip-audit`) | 2 advisories | **0** | 0 |
 | Indicators available to strategies | 2 (SMA-10, SMA-50) | **8, any period 2–200** | 2 |
 | Ways to compare strategies | none | **strategies × symbols matrix + index benchmark** | 3 |
+| Logins allowed by a 10/min limit (2 API processes) | 20 | **exactly 10** | 3.5 |
+| API throughput at saturation with shared rate limits | 31–41 req/s (stock DB cache) | **52–55 req/s** (upsert) | 3.5 |
+| Run interrupted by a deploy | stuck 120–150 s, one retry used | **requeued in 2.26 s**, no retry used | 3.5 |
+| Endpoints in the API docs | none (first schema: 17 left out) | **32 operations, 0 warnings, CI-enforced** | 3.5 |
+| Known capacity | unknown | **~50 req/s, ~20 users per small API instance; 537 runs/min per worker** | 3.5 |
 
 ---
 
@@ -228,3 +233,51 @@ downloaded it again on every run.
 |---|---|---|
 | An invalid MACD pair was reported 4 times (once per linked rule) | Reasons de-duplicated | Reported once *(test)* |
 | CI failed on an error after a passing frontend test (timing on a slower machine) | The data-hook mock defaults to "loading" | CI green; the test also checks the navigation |
+
+---
+
+# Phase 3.5 · Engineering hardening
+
+### 3.5.1 · Rate limits that mean what they say
+**Why:** gunicorn runs 2 processes, and each kept its own throttle counters, so every limit was really twice as high. The login
+limit exists to slow password guessing.
+1. **Before:** 30 rapid wrong-password logins against the real 2-process server (limit 10/min): **20 allowed** (16 on another try).
+2. **Changes made:** counters in a Postgres table shared by every process and instance (D-073), created by a migration, no Redis.
+3. **Result:** the same test allows **exactly 10, refuses 20** *(measured; plus a test that two cache instances share one counter)*.
+
+### 3.5.2 · Shared counters without the throughput cost *(found by the load test)*
+**Why:** the first load test with Django's stock database cache was clearly slower; reading its `set()` showed why.
+1. **Before:** each counter write ran `SELECT COUNT(*)` over the table, a savepoint, a `SELECT`, an `UPDATE`/`INSERT` and a release.
+   Load test: **31–41 requests/s** at 40–80 users, p95 590 ms at 20 users (two runs, consistent).
+2. **Changes made:** `UpsertDatabaseCache`: one `INSERT … ON CONFLICT DO UPDATE`; expired rows deleted by the hourly housekeeping (D-075).
+3. **Result:** **52–55 requests/s** at 40–80 users, p95 **380 ms** at 20 users; 1 statement per write instead of ≥ 3 *(test)*.
+   Same as per-process counters within measurement noise.
+
+### 3.5.3 · A deploy doesn't strand a run
+**Why:** every deploy restarts the worker. The worker already finished its current run on `SIGTERM`, but had no deadline, and
+the platform kills it 30 s later.
+1. **Before:** a run still going at the kill stayed `running` for **120–150 s** (stale recovery) and used one of its 3 attempts.
+2. **Changes made:** no claims after `SIGTERM`; past `WORKER_GRACE_S` (20 s) the run is requeued at once without counting the attempt (D-074).
+3. **Result:** real worker process, 2 s grace: the run was **back in the queue 2.26 s** after `SIGTERM`, `attempts = 0` *(measured; 4 tests)*.
+
+### 3.5.4 · Every endpoint documented, and kept that way
+1. **Before:** no API docs. The first generated schema silently left out **17 endpoints** and had **13 untyped fields**.
+2. **Changes made:** OpenAPI with drf-spectacular, explicit request/response declarations on every view, type hints, Swagger UI with bundled assets; CI fails on any schema warning (D-072, D-076).
+3. **Result:** **0 warnings, 32 operations** documented; a new undocumented view fails CI.
+
+### 3.5.5 · A click can be traced to the worker error
+1. **Before:** text logs; no way to connect an API request to the run it created or the worker's lines about that run.
+2. **Changes made:** request IDs (kept from a valid incoming header, else generated), returned in `X-Request-ID`, stored on runs and experiments, on every JSON log line, and set by the worker while it processes the run (D-070). Server-error messages in the UI show the ID.
+3. **Result:** one search on the ID finds the request, the run and the worker's lines *(tests)*; access lines carry route patterns, not URLs, and no emails *(test)*.
+
+### 3.5.6 · The system reports its own health
+1. **Before:** health checks only; queue backlog or a dead worker was invisible until users complained.
+2. **Changes made:** token-protected `/metrics` (Prometheus text): HTTP rate, errors and latency by route, and queue health from the database: depth per lane, oldest queued age, active, completed and failed per category, run-time p50/p95, stale runs (D-069). Sentry ready behind `SENTRY_DSN`, without personal data (D-071).
+3. **Result:** off without a token (404), 401 for a wrong one *(tests)*; queue numbers are correct across all processes because they come from the queue table.
+
+### 3.5.7 · Capacity is a number, not a guess
+1. **Before:** "no load test has been run" (README known limitations); `MAX_GRID` 25 was a placeholder "until Phase 3.5 measures capacity".
+2. **Changes made:** a Locust scenario of real user behaviour, run against a container limited like a small Render instance; worker and queue benchmarks (D-067, D-068).
+3. **Result:** API knee at **~20 users, ~50 requests/s**, no failed requests up to 80 users; one worker **537 runs/min**, 4 workers 1,263;
+   claim latency **flat (8–12 ms median) from 100 to 100,000 queued**. A 25-child experiment is ~3 s of one worker, so `MAX_GRID`
+   stays 25 for readability, not capacity.

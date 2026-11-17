@@ -11,7 +11,8 @@ Security notes:
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -27,6 +28,10 @@ from accounts.serializers import (DeleteAccountSerializer, EmailChangeSerializer
 from accounts.tokens import decode_uid, email_verification_token, password_reset_token
 
 INVALID_LINK = "This link is invalid or has expired."
+
+# Response shapes for the OpenAPI schema (D-072).
+USER = inline_serializer("UserEnvelope", {"user": UserSerializer(allow_null=True)})
+DETAIL = inline_serializer("Detail", {"detail": serializers.CharField()})
 
 
 class CsrfEnforced:
@@ -69,6 +74,7 @@ class CsrfView(APIView):
     """Sets the csrftoken cookie. The SPA calls this once on load, before any POST."""
     permission_classes = [AllowAny]
 
+    @extend_schema(responses=DETAIL)
     def get(self, request):
         return Response({"detail": "ok"})
 
@@ -77,12 +83,14 @@ class CsrfView(APIView):
 class MeView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(responses=USER)
     def get(self, request):
         user = request.user if request.user.is_authenticated else None
         return Response({"user": UserSerializer(user).data if user else None})
 
 
 class SignupView(AuthView):
+    @extend_schema(request=NewCredentialsSerializer, responses={201: USER})
     def post(self, request):
         if request.user.is_authenticated:
             raise ValidationError({"detail": "Already signed in. Guests can save their account instead."})
@@ -96,6 +104,7 @@ class SignupView(AuthView):
 
 
 class LoginView(AuthView):
+    @extend_schema(request=LoginSerializer, responses=USER)
     def post(self, request):
         s = LoginSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -109,6 +118,7 @@ class LoginView(AuthView):
 class LogoutView(CsrfEnforced, APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=None, responses={204: None})
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -117,6 +127,7 @@ class LogoutView(CsrfEnforced, APIView):
 class GuestView(AuthView):
     throttle_scope = "guest"
 
+    @extend_schema(request=None, responses={201: USER})
     def post(self, request):
         if request.user.is_authenticated:
             raise ValidationError({"detail": "Already signed in."})
@@ -128,6 +139,7 @@ class GuestView(AuthView):
 class ConvertGuestView(SignedInView):
     """A guest keeps all their data and becomes a normal (unverified) account."""
 
+    @extend_schema(request=NewCredentialsSerializer, responses=USER)
     def post(self, request):
         user = request.user
         if not user.is_guest:
@@ -145,6 +157,7 @@ class ConvertGuestView(SignedInView):
 
 
 class VerifyEmailView(AuthView):
+    @extend_schema(request=TokenSerializer, responses=USER)
     def post(self, request):
         s = TokenSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -156,6 +169,7 @@ class VerifyEmailView(AuthView):
 
 
 class ResendVerificationView(SignedInView):
+    @extend_schema(request=None, responses=DETAIL)
     def post(self, request):
         user = request.user
         if user.is_guest or user.email_verified:
@@ -165,6 +179,7 @@ class ResendVerificationView(SignedInView):
 
 
 class PasswordResetView(AuthView):
+    @extend_schema(request=EmailSerializer, responses=DETAIL)
     def post(self, request):
         s = EmailSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -176,6 +191,7 @@ class PasswordResetView(AuthView):
 
 
 class PasswordResetConfirmView(AuthView):
+    @extend_schema(request=SetPasswordSerializer, responses=DETAIL)
     def post(self, request):
         s = SetPasswordSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -187,6 +203,7 @@ class PasswordResetConfirmView(AuthView):
 
 
 class PasswordChangeView(SignedInView):
+    @extend_schema(request=PasswordChangeSerializer, responses=USER)
     def post(self, request):
         s = PasswordChangeSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -200,6 +217,7 @@ class PasswordChangeView(SignedInView):
 
 
 class EmailChangeView(SignedInView):
+    @extend_schema(request=EmailChangeSerializer, responses=USER)
     def post(self, request):
         s = EmailChangeSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -216,6 +234,7 @@ class EmailChangeView(SignedInView):
 
 
 class DeleteAccountView(SignedInView):
+    @extend_schema(request=DeleteAccountSerializer, responses={204: None})
     def post(self, request):
         s = DeleteAccountSerializer(data=request.data)
         s.is_valid(raise_exception=True)
