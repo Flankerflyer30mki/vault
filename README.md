@@ -400,7 +400,7 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, an 
 
 Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Turn on Render's "auto-deploy after CI checks pass" so a red build does not ship.
 
-**Frontend (Vercel):** root `frontend/`, build `npm run build`, output `dist/`. **Replace `VAULT_API_HOST` in `frontend/vercel.json` with the Render API host** (e.g. `vault-api.onrender.com`). That rewrite is what makes `/api` same-origin. Don't set `VITE_API_URL`.
+**Frontend (Vercel):** root `frontend/`, build `npm run build`, output `dist/`. `frontend/vercel.json` rewrites `/api/*` to the Render API host (`vault-api-pqje.onrender.com`; change it if the API moves). That rewrite is what makes `/api` same-origin. Don't set `VITE_API_URL` (v1 used it; remove it from the Vercel project).
 
 **API (Render web service, Docker, root `backend/`):**
 
