@@ -16,6 +16,7 @@ Vault runs a trading strategy against historical daily market data and reports r
 - [Market data](#market-data)
 - [Jobs, limits and failure behaviour](#jobs-limits-and-failure-behaviour)
 - [Experiments: comparisons and optimizations](#experiments-comparisons-and-optimizations)
+- [AI assistance: describe a strategy in words](#ai-assistance-describe-a-strategy-in-words)
 - [Accounts and workspaces](#accounts-and-workspaces)
 - [Operations: logs, metrics, capacity](#operations-logs-metrics-capacity)
 - [Security](#security)
@@ -200,6 +201,36 @@ Picking the best parameters on the same data you then report on overstates perfo
 
 The UI labels in-sample results as optimised and shows the out-of-sample result separately, next to buy & hold. A high in-sample Sharpe is not evidence of an edge.
 
+## AI assistance: describe a strategy in words
+
+On the builder page, type a description ("buy when the 20-day EMA crosses above the 50-day and RSI 14 is under 70; sell when they cross back") and the AI fills in the rules. **You review them and save; the AI never saves or runs anything.** Requests it can't express (short selling, options, intraday, several symbols, fundamentals or sentiment) get a refusal naming what isn't supported, never a look-alike strategy. Stop-loss, take-profit and position size are run settings, so they come back as notes.
+
+How it works (decisions D-077 to D-083):
+
+1. `POST /api/assist/strategy/` stores the request as a job (`AssistRequest`) and returns at once; the client polls `GET /api/assist/<id>/`. The worker answers AI requests before backtests: a person is waiting, and a model call takes seconds, so it never runs inside an HTTP request.
+2. The worker sends the provider a fixed system prompt and the user's text, marked as data rather than instructions. No email or account data is sent. The prompt's indicator list, parameter ranges and operators are generated from the same registry the validator uses.
+3. The model must return one JSON object: a spec, or a refusal. The spec goes through `spec.validate`, the same allowlist as hand-built strategies, so whatever the model writes is data that is checked and interpreted, never executed. If validation fails, its path-keyed errors go back to the model, at most twice.
+4. **Provider:** Groq (OpenAI-compatible HTTP API, no SDK), model set by `AI_MODEL`. With no provider configured the panel is hidden and everything else works.
+
+| Control | Default | |
+|---|---|---|
+| AI requests per 24 h | guest 5 / unverified 10 / verified 50 | `QUOTA_<TIER>_AI_REQUESTS_PER_DAY`; one active request per user |
+| Description length | 1,000 characters | `AI_MAX_PROMPT_CHARS` |
+| Daily token budget (whole deployment, UTC day) | 150,000 | `AI_DAILY_TOKEN_BUDGET`; keep it below the provider's free daily limit. When used up, AI answers 503 and nothing else is affected |
+| Answer cache | 7 days | the same description (ignoring case and spacing), prompt version and model reuses the earlier answer |
+| Retention | 30 days | requests (including descriptions) are deleted by housekeeping, and with the account |
+
+**Privacy:** descriptions are sent to Groq. Groq says it doesn't train on API data; switch on Zero Data Retention in the Groq console so it keeps nothing either. Descriptions never appear in Vault's logs, which record only outcomes, token counts and timings.
+
+**Evaluation:** `python manage.py assist_eval` runs 60 cases (simple and multi-condition rules, every indicator, vague wording, Hindi-English, unsupported requests, prompt injection) live or from a recording. Answers are graded by behaviour: a spec passes if it holds exactly the same positions as a reference strategy on five fixed price series, so equivalent formulations pass and near misses fail. CI replays the committed recordings, and a prompt change fails CI until a new live run is recorded. Results (2026-11-17, Groq free tier, details in [docs/evals.md](docs/evals.md#phase-4--ai-assistance-describe-a-strategy--spec)):
+
+| Model | Passed | Refusals correct | Median / p95 latency |
+|---|---|---|---|
+| **openai/gpt-oss-120b** (default) | **60/60** | 18/18 | 1.7 s / 2.8 s |
+| openai/gpt-oss-20b | 57/60 | 16/18 | 1.2 s / 1.8 s |
+
+The first run also found a validator gap: a rule comparing something with itself ("SMA 20 crosses above SMA 20") was accepted. It is now rejected, and the repair round fixes the model's answer.
+
 ## Accounts and workspaces
 
 Everything a user creates is private. Another user's run, trades or experiment returns `404`, not `403`, so the API doesn't reveal that it exists. Built-in strategies are shared and read-only.
@@ -337,6 +368,7 @@ CI also runs the suite on PostgreSQL 16, along with a migration-drift check, an 
 - queue and worker: **priority lanes** (a hand-started run claimed before older batch children), **4 real worker threads on Postgres never claiming a run twice**, worker caches giving identical results and never serving bars after a re-download, time-based heartbeat (no writes for fast runs, still beating for slow ones)
 - curve downsampling keeping extremes and ends, the new metrics hand-checked, tunable-parameter grouping
 - frontend: comparison form (cell count and limits, request body), experiment page (heatmap values and colours, benchmark row, failures, metric switch; optimization columns and skipped combinations)
+- AI assistance (no test reaches the network): a valid answer, code fences tolerated, validator errors sent back and repaired, giving up after the repair budget, refusals, answers that aren't a spec (including `import os` as the spec) rejected, bounded names and notes, the Groq client (request shape, retry after a rate limit, no retry on a bad key, non-JSON output handed to repair), the API end to end with the request ID stored, off without a key, other users' requests 404, length limits, one-at-a-time and daily quotas, the answer cache, the token budget, failures not retried, descriptions never logged and never sent with account data, shutdown requeue, stale requests failed, old requests deleted, AI requests answered before backtests, `/metrics`; the evaluation's grading (equivalent formulations match, near misses don't, every reference trades), a perfect and a lazy fake model, and the committed live recordings replaying to their recorded scores; frontend: the panel hidden without AI, filling the form and showing notes, showing a refusal without touching the form
 - operations: JSON log lines with request and run IDs, request IDs kept or replaced and stored on runs, the access line using the route pattern, `/metrics` (off without a token, Bearer check, queue health), throttle counters shared between cache instances and written in one statement, expired cache rows removed, the OpenAPI schema generated without warnings, and graceful shutdown (no claims after `SIGTERM`, a run past the grace period requeued without using an attempt)
 
 ## Deploy (Vercel + Render)
@@ -356,6 +388,7 @@ Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Tu
 | Email | `EMAIL_HOST`, `EMAIL_PORT` (587), `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` (any SMTP provider, e.g. Resend). Without `EMAIL_HOST`, emails go to the log |
 | Check on staging | `NUM_PROXIES`: requests now arrive through Vercel and then Render's proxy. Inspect a real `X-Forwarded-For` chain and set the count to match |
 | Optional | `SECURE_HSTS_SECONDS=31536000` once HTTPS is verified, `WEB_CONCURRENCY`, `METRICS_TOKEN`, `SENTRY_DSN`, and the limits listed above |
+| AI (optional) | `AI_PROVIDER=groq`, `GROQ_API_KEY` (a secret), `AI_MODEL`, `AI_DAILY_TOKEN_BUDGET` below the provider's daily limit. Set them on the API (it reports whether AI is on) **and** the worker (it makes the calls) |
 
 **Worker (Render background worker, same repo and image):** command `python manage.py run_worker`, with the same env as the API minus the HTTP-only settings. Keep `WORKER_GRACE_S` below the platform's shutdown window (Render: 30 s).
 
@@ -429,4 +462,5 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - Out-of-sample evaluation uses a single chronological split. Walk-forward evaluation and parameter-sensitivity reports are not built (D-061).
 - Worker caches are per process: several workers each warm their own. An experiment's limit stays 25 child runs: a 25-child batch takes about 3 s on one worker, so the limit is about result readability, not capacity.
 - Runs created by the v1 engine are flagged in the UI as unreliable. Re-run them.
+- AI answers can be wrong in ways the validator can't see (a valid strategy that isn't what you meant), which is why the AI only fills the form for you to review. The provider's free limits are shared by the whole deployment, and providers retire models; switching `AI_MODEL` needs a new evaluation run.
 - Capacity numbers come from a local machine with Render-like container limits, not from Render itself; repeat the load test on staging.

@@ -23,6 +23,10 @@ timing. Decisions behind each change are in [decisions.md](decisions.md).
 | Run interrupted by a deploy | stuck 120–150 s, one retry used | **requeued in 2.26 s**, no retry used | 3.5 |
 | Endpoints in the API docs | none (first schema: 17 left out) | **32 operations, 0 warnings, CI-enforced** | 3.5 |
 | Known capacity | unknown | **~50 req/s, ~20 users per small API instance; 537 runs/min per worker** | 3.5 |
+| Describe a strategy in words → correct strategy | not possible | **60/60 cases, 18/18 refusals, 1.7 s median** (gpt-oss-120b) | 4 |
+| Rule comparing something with itself (never fires) | accepted by the validator | **rejected; found by the AI evaluation** | 4 |
+| AI prompt: catalog + examples vs format only (gpt-oss-20b, 52 cases) | 54% | **94%** | 4 |
+| Re-measuring the AI after a change | ~130,000 tokens, ~20 min | **1 model call** (`--reuse`) | 4 |
 
 ---
 
@@ -281,3 +285,49 @@ the platform kills it 30 s later.
 3. **Result:** API knee at **~20 users, ~50 requests/s**, no failed requests up to 80 users; one worker **537 runs/min**, 4 workers 1,263;
    claim latency **flat (8–12 ms median) from 100 to 100,000 queued**. A 25-child experiment is ~3 s of one worker, so `MAX_GRID`
    stays 25 for readability, not capacity.
+
+---
+
+# Phase 4 · AI assistance
+
+### 4.1 · Describe a strategy in words
+**Why:** building rules in a form is slow for people who think in sentences ("golden cross, out on the death cross").
+1. **Before:** strategies could only be built field by field.
+2. **Changes made:** the AI turns a description into the builder's JSON spec; `spec.validate` checks it, validator errors go back for up to 2 repairs, and the result fills the form for the user to review (D-077 to D-080). Requests run as worker jobs, within quotas and a daily token budget.
+3. **Result:** gpt-oss-120b: **60/60** on the evaluation, including **18/18** unsupported and injection requests refused, 0 strategies wrongly refused, 0 prompt leaks; **1.7 s** median, 2.8 s p95.
+
+### 4.2 · A validator gap found by the AI evaluation
+**Why:** the first live run failed one case, "Buy on a golden cross", with 99.5% bar agreement, so the answer was close but not right.
+1. **Before:** the model answered "SMA 20 crosses above SMA 20", a rule that can never fire, and `spec.validate` **accepted it**. A person could save the same rule in the form.
+2. **Changes made:** a condition whose two sides are identical (after defaults are filled in) is rejected with a path-keyed error (+1 test).
+3. **Result:** on the re-run the validator rejected that answer, the repair round sent its error back, and the model answered the 50/200 cross: **59/60 → 60/60**. The fix also protects hand-built strategies.
+
+### 4.3 · The model is chosen by measurement
+1. **Before:** "the bigger model is probably better" was a guess.
+2. **Changes made:** the same 60 cases on gpt-oss-120b and gpt-oss-20b (D-085).
+3. **Result:** 120b 60/60 vs 20b 57/60. 20b's three failures were valid but wrong: comparisons reversed, a false note promising leverage, futures quietly treated as the index. 20b is 0.5 s faster at the median; 120b stays the default.
+
+### 4.4 · What the prompt's catalog and examples are worth
+1. **Before:** a format-only prompt.
+2. **Changes made:** the prompt lists every indicator, parameter range and operator (generated from the registry), the execution semantics and three worked examples.
+3. **Result:** on gpt-oss-20b, over the same 52 cases: **28/52 (54%) → 49/52 (94%)**. Partial and unrecorded: the bare run hit the daily token limit (D-086).
+
+### 4.5 · Honest latency
+1. **Before:** the first run's per-call time included waiting out the free tier's 8,000 tokens/min limit (70 retries): "median 5.8 s".
+2. **Changes made:** the recorder subtracts rate-limit waits and keeps them separately; latency comes from runs paced to stay under the limit.
+3. **Result:** **1.7 s** median for gpt-oss-120b (1.2 s for 20b): the model, not the queue in front of it.
+
+### 4.6 · Re-measuring costs a call, not a day's tokens
+1. **Before:** any change meant a full run: ~130,000 tokens (most of a model's free day) and ~20 minutes.
+2. **Changes made:** `assist_eval --reuse` answers already-recorded messages from the recording and calls the model only for new ones.
+3. **Result:** after the validator fix, the re-run made **1 live call** (60 reused).
+
+### 4.7 · CI keeps the evaluation honest
+1. **Before:** an evaluation is a number in a document that goes stale when the prompt or validator changes.
+2. **Changes made:** the live runs are committed as recordings; CI replays them (no network, no tokens) and requires the recorded scores.
+3. **Result:** the validator fix broke the replay at once (v01 needed an unrecorded repair round), and the score couldn't be claimed until it was re-measured *(test)*.
+
+### 4.8 · Smaller fixes found by tests
+| Before | Change | Result |
+|---|---|---|
+| A new worker-loop test hung on Postgres only (CPU spinning, no DB connection) | Found that `close_old_connections()` closes a test's transaction on Postgres; patched it in the test and capped the loop | Postgres suite 187/187 in 43.6 s; a regression can no longer hang CI |

@@ -27,10 +27,12 @@ def delete_expired_cache_rows():
 
 
 def run():
+    from assist.jobs import delete_old as delete_old_ai_requests
     guests = delete_expired_guests()
     sessions, _ = Session.objects.filter(expire_date__lt=timezone.now()).delete()
     cache_rows = delete_expired_cache_rows()
-    if guests or sessions or cache_rows:
-        log.info("event=housekeeping guests_deleted=%s sessions_deleted=%s cache_rows_deleted=%s",
-                 guests, sessions, cache_rows)
+    ai_requests = delete_old_ai_requests()  # users' descriptions are kept AI["RETENTION_DAYS"] (D-083)
+    if guests or sessions or cache_rows or ai_requests:
+        log.info("event=housekeeping guests_deleted=%s sessions_deleted=%s cache_rows_deleted=%s "
+                 "ai_requests_deleted=%s", guests, sessions, cache_rows, ai_requests)
     return guests, sessions

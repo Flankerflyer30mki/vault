@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import api, { errorText } from "../api";
+import AssistPanel from "../builder/AssistPanel";
 import {
   blankSpec,
   conditionsOf,
@@ -272,6 +273,14 @@ function StrategyBuilder() {
         On every bar: if the sell group is true, sell; otherwise, if the buy group is true, buy. Orders fill at the next
         bar&apos;s open. Long-only: the strategy is either fully invested or in cash.
       </p>
+      {catalog.ai_enabled && (
+        <AssistPanel
+          onSpec={(spec, suggested) => {
+            setState(toFormState(spec));
+            setName((current) => current || suggested);
+          }}
+        />
+      )}
       {/* noValidate: the server is the one source of truth, so its message shows on the field (the same wording
           as the live check) instead of the browser's own popup. min/max still drive the number spinners. */}
       <form onSubmit={save} noValidate>

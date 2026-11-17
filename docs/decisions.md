@@ -84,6 +84,17 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-074 | 3.5 | Graceful worker shutdown on SIGTERM: stop claiming, finish within a grace period or requeue | Accepted |
 | D-075 | 3.5 | Throttle cache writes as one upsert; expired rows removed by housekeeping (found by the load test) | Accepted |
 | D-076 | 3.5 | Every endpoint documented explicitly in the schema; JSON logs replace gunicorn's access log | Accepted |
+| D-077 | 4 | Phase 4 scope: describe a strategy in words → the builder form is filled in; the user reviews and saves | Accepted |
+| D-078 | 4 | AI requests are queued jobs handled by the worker, never made inside an HTTP request | Accepted |
+| D-079 | 4 | Groq (free tier) behind a provider interface; a fake provider for tests; model name in config (refines D-013) | Accepted |
+| D-080 | 4 | The model returns the JSON spec (or a refusal) only; `spec.validate` checks it; up to 2 repair rounds with path-keyed errors | Accepted |
+| D-081 | 4 | Cost and abuse controls: daily AI quota by tier, 1,000-character prompts, global daily token budget, answer cache | Accepted |
+| D-082 | 4 | Evaluation: ~60 cases graded by behaviour (identical signals on fixed price series), refusals, prompt-injection cases, ablation | Accepted |
+| D-083 | 4 | Privacy: the UI says descriptions go to Groq; prompts kept 30 days; no account data sent | Accepted |
+| D-084 | 4 | "Explain this result" deferred to Phase 5 | Deferred |
+| D-085 | 4 | Default model `openai/gpt-oss-120b`, chosen by the evaluation (60/60 vs 57/60 for gpt-oss-20b) | Accepted |
+| D-086 | 4 | Ablation cut to what fits the free tier; the full ablation is deferred | Deferred |
+| D-087 | 4 | The validator rejects a condition whose two sides are identical (found by the evaluation) | Accepted |
 
 ---
 
@@ -610,3 +621,95 @@ no capacity numbers, and a deploy that kills a worker mid-run leaves that run st
   configuration that an API-only project didn't have.
 - **Decision:** each view declares its request and response with `extend_schema`; computed fields have type hints; enum
   names are fixed; CI fails on any warning. gunicorn's access log is turned off because the JSON access line replaces it.
+
+---
+
+# Phase 4 · AI assistance (approved 2026-11-17)
+
+Starting point: strategies are built by hand in the form. Phase 4 adds a single-shot assistant with the user in control;
+Phase 5 adds the agent. What Phase 4 builds (provider module, AI job queue, quotas and budget, evaluation harness) is what
+Phase 5 reuses.
+
+## D-077 · Scope: words → a filled-in builder form
+- **Decision:** the user describes a strategy in plain language; the AI returns a spec, which loads into the builder form for
+  the user to review, change and save. The AI never saves or runs anything. Unsupported requests (shorting, options,
+  intraday, several assets, fundamentals) get an honest refusal naming what isn't supported, never a look-alike strategy.
+  Stop-loss and take-profit are run settings, not spec rules, so the AI reports them as notes.
+- **Why:** shows the interesting AI engineering (structured output, validation, repair, evaluation) on a feature with a clear
+  right answer, and keeps a person between the model and anything that costs money or changes data.
+
+## D-078 · AI requests run in the worker
+- **Options:** (A) call the model inside the HTTP request; (B) queue an `AssistRequest` row that the worker processes; the
+  UI polls.
+- **Decision:** B. The worker checks AI requests before backtests (they are interactive and short).
+- **Why:** a call takes seconds, and Phase 3.5 measured 2 gunicorn processes per instance: two people waiting on the AI
+  would stall the API. Matches "the request path never waits on outside services", and reuses claims, request IDs,
+  graceful shutdown and stale recovery. Cost: about a second of polling, and a worker is busy while the model answers.
+
+## D-079 · Groq behind a provider interface (refines D-013)
+- **Options:** Gemini free tier; Groq free tier; a paid model with a cap.
+- **Decision:** one `Provider` interface (`complete(messages) → text + token counts`), a fake for tests and CI, and Groq as
+  the real provider through its OpenAI-compatible HTTP API (no SDK). Provider, model and key come from env
+  (`AI_PROVIDER`, `AI_MODEL`, `GROQ_API_KEY`); without them AI is off and everything else works.
+- **Why:** free with no card; fast, which matters even more for Phase 5's agent loop; Groq says it keeps no inference
+  data by default and doesn't train on API data, where free Gemini may use prompts. Groq hosts several models on one key,
+  so the evaluation can compare models at no cost.
+
+## D-080 · Output contract, validation and repair
+- **Decision:** the model must answer with one JSON object: `{"status": "ok", "name", "spec", "notes"}` or
+  `{"status": "unsupported", "reason"}`. The spec goes through the same `spec.validate` allowlist as hand-built strategies.
+  If it fails, the path-keyed errors go back to the model, at most twice. The prompt (indicator list, parameter ranges,
+  operators, semantics) is generated from `indicators.REGISTRY`, so a new indicator reaches the AI with no prompt edit.
+  The user's text is marked as data, not instructions.
+- **Why:** the model only ever produces data that the existing validator already treats as untrusted (D-033), so a bad or
+  manipulated answer costs a retry, never safety.
+
+## D-081 · Cost and abuse controls
+- **Decision:** AI requests per 24 h by tier (guest 5, unverified 10, verified 50), one active AI request per user, prompts
+  ≤ 1,000 characters, a global daily token budget (`AI_DAILY_TOKEN_BUDGET`, set below the provider's free limit; when it's
+  used up, AI answers 503 and nothing else is affected), and identical descriptions answered from earlier results (same
+  normalised text, prompt version and model, within 7 days). Tokens, outcomes and queue depth go to `/metrics`.
+- **Why:** the free tier's limits belong to the whole deployment, not to each user.
+
+## D-082 · Evaluation
+- **Decision:** about 60 cases in categories (simple, several conditions, each indicator, vague wording, Hindi-English mix,
+  unsupported, prompt injection). A spec answer passes if it produces **exactly the same signals** as the reference spec on
+  fixed synthetic price series (trend, range, crash, random walk), since the same strategy can be written many ways; a
+  test checks every reference actually trades on those series, so an empty match can't pass. Unsupported and injection
+  cases must be refused; a marker in the system prompt must never appear in an answer. Reported: valid rate, valid on the
+  first try, behaviour match, correct refusals, false refusals, repair rounds, p50/p95 latency, tokens. An ablation shows
+  what each part earns (bare prompt → + catalog → + examples → + repair). CI replays a recorded live run, so it is free and
+  deterministic, and fails if the prompt changes without a new recording.
+- **Why:** "it seemed to work" isn't evidence; the AI roles the project targets ask how a model feature is measured.
+
+## D-083 · Privacy
+- **Decision:** the assistant panel says the description is sent to an AI service (Groq). Only the user's text and the
+  fixed system prompt are sent: no email, no account data, no other strategies. Requests are kept 30 days (for support and
+  the answer cache), then deleted by housekeeping, and are deleted with the account. Groq's Zero Data Retention setting
+  should be switched on in its console (a deployment step for the owner).
+
+## D-084 · "Explain this result" deferred to Phase 5
+- **Why:** the agent has to explain its choices anyway; keeping Phase 4 to one feature keeps its evaluation sharp.
+
+## Phase 4 · Decisions made from the evaluation
+
+## D-085 · Default model: gpt-oss-120b
+- **Options:** `openai/gpt-oss-120b` or `openai/gpt-oss-20b` (both free on Groq; no Llama model was available on the account).
+- **Decision:** 120b. It passed 60/60 against 57/60, and 20b's misses were the dangerous kind: valid specs that mean
+  something else (comparisons reversed), a note promising leverage that doesn't exist, futures quietly treated as the index.
+- **Cost:** ~0.5 s slower at the median (1.7 s vs 1.2 s). `AI_MODEL` switches it; a switch needs a new evaluation run.
+
+## D-086 · Ablation cut short
+- **Context:** each model's free tier allows 200,000 tokens a day, about one full 60-case run. The bare-prompt run on
+  gpt-oss-20b ran out after 52 cases (without the catalog it needed more repair rounds).
+- **Decision:** stop it; report it as partial and unrecorded (54% vs 94% on the same 52 cases); skip the "catalog without
+  examples" step. "No repair" comes from the recorded full runs (temperature 0). Redo the full ablation if a paid tier or a
+  prompt change makes it worth the tokens.
+- **Why:** the user asked to skip what isn't needed; the model comparison and the recorded 60/60 are the evidence.
+
+## D-087 · A condition can't compare something with itself
+- **Context:** the first live run produced "SMA 20 crosses above SMA 20" for "golden cross", and `spec.validate` accepted
+  it. Such a rule never fires (or, with `>=`, always does); the form could save it too.
+- **Decision:** reject a condition whose two normalised sides are equal: "compares something with itself: the two sides
+  must differ". Same indicator with different outputs (Bollinger upper vs lower) is still allowed.
+- **Result:** the repair loop turned the model's answer into the 50/200 cross; the evaluation went from 59/60 to 60/60.

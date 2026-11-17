@@ -244,6 +244,20 @@ class SpecValidationTests(SimpleTestCase):
             "exit.any": "must be a list of 1 to 10 conditions",
         })
 
+    def test_a_condition_cannot_compare_something_with_itself(self):
+        # Found by the Phase 4 AI evaluation: "SMA 20 crosses above SMA 20" validated, and can never fire.
+        same = "compares something with itself: the two sides must differ"
+        ok = [cond({"price": "close"}, ">", {"const": 1})]
+        for left, right in ((opnd("sma", period=20), opnd("sma", period=20)),
+                            (opnd("sma"), opnd("sma", period=20)),  # equal once defaults are filled in
+                            ({"price": "close"}, {"price": "close"})):
+            with self.subTest(left=left, right=right):
+                bad = {"version": 1, "entry": {"all": [cond(left, "crosses_above", right)]}, "exit": {"any": ok}}
+                self.assertEqual(self.errors(bad), {"entry.all[0]": same})
+        fine = {"version": 1, "entry": {"all": [cond(opnd("sma", period=20), ">", opnd("sma", period=50))]},
+                "exit": {"any": [cond(opnd("bbands", "upper"), ">", opnd("bbands", "lower"))]}}  # same indicator, different output
+        spec.validate(fine)
+
     def test_shape_errors(self):
         one = [cond({"price": "close"}, ">", {"const": 1})]
         self.assertEqual(self.errors([]), {"spec": "must be an object"})
