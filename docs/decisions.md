@@ -104,6 +104,10 @@ the resulting code changes in [changes.md](changes.md), and test evidence in [ev
 | D-094 | 5 | No live evaluation in Phase 5; quality vs baselines deferred; first live run on the Phase 6 checklist | Deferred |
 | D-095 | 5 | Research runs use a hidden built-in strategy and a `research` experiment kind; schema and data migrations split | Accepted |
 | D-096 | 5 | Fixes from the first live research run: grounding precision, agent output room, explore cap, twin candidates | Accepted |
+| D-097 | 6 | Deploy on the existing free Render service and database: Docker, embedded worker, migrations at start; straight to production after a backup and a rehearsal on a copy | Accepted |
+| D-098 | 6 | Vercel `/api` rewrite uses a regex source so paths ending in `/` match (production hotfix) | Accepted |
+| D-099 | 6 | Yahoo blocks Render's IPs: popular symbols are pre-loaded from a residential connection; a fallback data source follows | Accepted |
+| D-100 | 6 | After release, PRs target `main` directly (CI gate); `release/v2` is kept in sync but no longer needed | Accepted |
 
 ---
 
@@ -812,3 +816,42 @@ Constraint agreed with the user: finish today, so no live evaluation runs (D-094
   (4) a candidate whose results equal an earlier one's is marked "same results as cN" for the agent and in the UI; the
   replaced summary is shown as a warning, not a ✗.
 - **Not yet re-verified live:** the day's free tokens were used by that run; the next live run should confirm (2) and (3).
+
+---
+
+# Phase 6 · Release (2026-11-17/18)
+
+Starting point: `main` was v1, live on Vercel (`vault-lovat-beta.vercel.app`) and a free Render web service
+(`vault-api-pqje`, Docker) with a free Render Postgres 16 (v1 data at backtester `0011`, no accounts app; it expires
+2026-12-10). The user wanted the revamp finished the same day.
+
+## D-097 · How v2 was deployed
+- **Options:** a staging copy first, or production directly with safeguards.
+- **Decision:** production directly, on the existing services, after: a `pg_dump` backup (restore-verified), a
+  **rehearsal of the v2 migrations on a restored copy of the production data** (v1 → v2 in 4.9 s, every row kept), and
+  `check --deploy` with production settings. Free plan, so: no separate worker (`EMBEDDED_WORKER=1`), migrations at start
+  (`RUN_MIGRATIONS=1`, single instance), same Dockerfile as CI. Existing database upgraded in place; v1's runs moved to the
+  hidden legacy user as designed in Phase 1. Email and Sentry left off; `METRICS_TOKEN` not set yet.
+- **Why:** a staging copy would have doubled the setup (and `vercel.json` names one API host); the rehearsal on real
+  data removed the main risk (the irreversible schema upgrade), and the backup covers the rest.
+- **Rollback:** Render → previous deploy **and** restore the backup (v1 code can't run on the v2 schema).
+
+## D-098 · Vercel rewrite: regex source (production hotfix)
+- **Context:** after release, the live site couldn't reach its API: `"/api/:path*"` didn't match Django's URLs ending in
+  `/`, so `/api/auth/csrf/` was served the SPA's `index.html` (while `/api/auth/csrf` reached Django and was redirected
+  to the slash URL, which proved the cause). No test covered Vercel's routing; local dev uses Vite's proxy.
+- **Decision:** `{"source": "/api/(.*)", "destination": "https://vault-api-pqje.onrender.com/api/$1"}`; shipped as a
+  hotfix PR to `main` (CI green), live within a minute. The smoke test now calls the API through the Vercel domain.
+
+## D-099 · Yahoo blocks Render; pre-load now, a fallback source next
+- **Context:** the first live backtest on a symbol not yet stored (MSFT) failed with "No market data": Yahoo refuses
+  requests from Render's datacenter IPs, while the same code works from a residential connection.
+- **Decision (now):** pre-load the 17 suggested symbols and `^GSPC` (2005 → 2026-11-16, ~95,000 bars) into the
+  production database from the user's machine, with Vault's own `load_bars` (same bars and coverage the worker would
+  write). Result: the MSFT backtest completed in 26 ms. **Limits:** other symbols still fail on production, and stored
+  data stops updating (each request retries Yahoo, fails, and uses what's stored).
+- **Next:** a fallback provider that allows server access, used when Yahoo fails.
+
+## D-100 · Workflow after release
+- **Decision:** with `main` deployed, follow-up PRs branch from and target `main` (CI must pass; each merge deploys).
+  `release/v2` was fast-forwarded to `main` after the hotfix and is no longer needed for day-to-day work.
