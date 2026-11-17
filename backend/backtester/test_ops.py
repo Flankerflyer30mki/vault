@@ -90,6 +90,16 @@ class RequestContextTests(TestCase):
         self.assertGreaterEqual(rec.duration_ms, 0)
         self.assertNotIn("secret", json.dumps(rec.__dict__, default=str))
         self.assertNotIn("ops@example.com", json.dumps(rec.__dict__, default=str))  # no emails in access logs
+        self.assertEqual((rec.xff_hops, rec.via_vercel), (0, False))
+
+    def test_access_line_counts_proxy_hops_without_addresses(self):
+        # NUM_PROXIES must equal the hops a real request passed; the log shows the count, never the addresses.
+        with self.assertLogs("vault.access", "INFO") as logs:
+            self.api.get("/api/strategies/", HTTP_X_FORWARDED_FOR="203.0.113.9, 76.76.21.1",
+                         HTTP_X_VERCEL_FORWARDED_FOR="203.0.113.9")
+        rec = logs.records[0]
+        self.assertEqual((rec.xff_hops, rec.via_vercel), (2, True))
+        self.assertNotIn("203.0.113.9", json.dumps(rec.__dict__, default=str))
 
     def test_probes_are_counted_but_not_logged(self):
         with self.assertNoLogs("vault.access", "INFO"):
