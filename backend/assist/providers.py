@@ -171,12 +171,14 @@ class ReplayProvider:
                           model=rec["model"])
 
 
-def get_provider():
-    """The configured provider, or None when AI is off (no provider or no key)."""
+def get_provider(max_tokens=None, reasoning_effort=None):
+    """The configured provider, or None when AI is off (no provider or no key). Callers with bigger answers (the
+    research agent) pass their own output limit and reasoning effort."""
     cfg = settings.AI
     if cfg["PROVIDER"] == "groq" and cfg["GROQ_API_KEY"]:
         return GroqProvider(cfg["GROQ_API_KEY"], cfg["MODEL"], timeout_s=cfg["TIMEOUT_S"],
-                            max_tokens=cfg["MAX_OUTPUT_TOKENS"], reasoning_effort=cfg["REASONING_EFFORT"])
+                            max_tokens=max_tokens or cfg["MAX_OUTPUT_TOKENS"],
+                            reasoning_effort=cfg["REASONING_EFFORT"] if reasoning_effort is None else reasoning_effort)
     return None
 
 

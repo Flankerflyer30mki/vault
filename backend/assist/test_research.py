@@ -20,7 +20,8 @@ from backtester.models import BacktestRun, Bar, Experiment, Strategy, SymbolCove
 from backtester.test_builder import FIXTURE_START, bars_for
 
 RESEARCH = {"MAX_STEPS": 8, "MAX_MODEL_CALLS": 14, "MAX_BACKTESTS": 40, "MAX_TOKENS": 40_000,
-            "MAX_CANDIDATES_PER_ROUND": 6, "MAX_SEARCH_VALUES": 6, "MIN_TRADES": 3, "MIN_DAYS": 365,
+            "MAX_CANDIDATES_PER_ROUND": 6, "MAX_EXPLORE_ROUNDS": 2, "MAX_OUTPUT_TOKENS": 4000,
+            "REASONING_EFFORT": "low", "MAX_SEARCH_VALUES": 6, "MIN_TRADES": 3, "MIN_DAYS": 365,
             "STALE_AFTER_S": 300, "MAX_ATTEMPTS": 3}
 
 
@@ -267,6 +268,52 @@ class ResearchRunTests(TestCase):
         self.assertIn("daily AI budget", run.steps.get(action="choose").note)
         self.assertEqual(run.report["text_source"], "template")
 
+    # ---- fixes from the first live run (D-096)
+
+    def test_explore_is_capped_then_the_run_refines(self):
+        more = {"action": "test", "why": "Two more families.", "candidates": [
+            {"name": "EMA 5/15", "spec": S([{"left": ind("ema", period=5), "op": "crosses_above",
+                                             "right": ind("ema", period=15)}],
+                                           [{"left": ind("ema", period=5), "op": "crosses_below",
+                                             "right": ind("ema", period=15)}])},
+            {"name": "ROC turn", "spec": S([{"left": ind("roc", period=10), "op": "crosses_above",
+                                             "right": {"const": 0}}],
+                                           [{"left": ind("roc", period=10), "op": "crosses_below",
+                                             "right": {"const": 0}}])}]}
+        run = self.start([TEST, more, CHOOSE, REPORT])
+        drain()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "completed")
+        self.assertIn("Stage: refine", self.fake.calls[2][1]["content"])  # moved on without asking the agent
+        moved = run.steps.get(actor="system", action="next_stage")
+        self.assertIn("Explore limit reached (2 rounds)", moved.note)
+        self.assertEqual(run.report["chosen"]["chosen_by"], "agent")
+
+    def test_twins_are_flagged(self):
+        sma_exit = [{"left": {"price": "close"}, "op": "crosses_below", "right": ind("sma", period=20)}]
+        twins = {"action": "test", "why": "x", "candidates": [
+            {"name": "Close over SMA 20", "spec": S([{"left": {"price": "close"}, "op": "crosses_above",
+                                                      "right": ind("sma", period=20)}], sma_exit)},
+            # The Bollinger middle band IS the 20-day SMA: different rules, identical trades.
+            {"name": "Close over BB middle", "spec": S([{"left": {"price": "close"}, "op": "crosses_above",
+                                                         "right": ind("bbands", "middle", period=20, std=2)}],
+                                                       sma_exit)}]}
+        run = self.start([twins, NEXT, CHOOSE, REPORT])
+        drain()
+        run.refresh_from_db()
+        cands = research.candidates(run)
+        self.assertEqual([c["same_as"] for c in cands], [None, "c1"])
+        self.assertIn("c2 | Close over BB middle (same results as c1) |", self.fake.calls[1][1]["content"])
+        self.assertEqual(self.api.get(f"/api/research/{run.id}/").data["candidates"][1]["same_as"], "c1")
+
+    def test_agent_steps_get_their_own_output_limit_and_reasoning_effort(self):
+        run = self.start([TEST])
+        with mock.patch("assist.research.providers.get_provider", return_value=None) as get:  # overrides start()'s
+            research.work_one("w")
+        get.assert_called_with(max_tokens=4000, reasoning_effort="low")
+        run.refresh_from_db()
+        self.assertEqual(run.status, "failed")  # no provider: fails cleanly
+
     def test_the_placeholder_strategy_is_hidden_and_not_runnable(self):
         hidden = Strategy.objects.get(name=research.PLACEHOLDER)
         self.assertTrue(hidden.is_hidden and hidden.is_builtin)
@@ -359,6 +406,13 @@ class GroundingTests(SimpleTestCase):
         text = ["EMA 20/50 returned 12.3% (12.34%, 0.12) with a Sharpe of 0.88 and a 20% drawdown, from 7 candidates "
                 "over 2018 to 2022."]
         self.assertEqual(agent.ungrounded_numbers(text, self.FACTS), [])
+
+    def test_real_values_quoted_to_four_decimals_pass(self):
+        # The first live run's summary was rejected for quoting a Sharpe of 1.290688 as "1.2907" (D-096).
+        facts = {"research_result": {"sharpe_ratio": 1.290688, "max_drawdown": 0.272412, "total_return": 2.689241}}
+        text = ["Sharpe 1.2907 (1.29), drawdown 0.2724 or 27.24%, return 268.92%."]
+        self.assertEqual(agent.ungrounded_numbers(text, facts), [])
+        self.assertEqual(agent.ungrounded_numbers(["Sharpe 1.2908"], facts), ["1.2908"])
 
     def test_invented_numbers_are_caught(self):
         self.assertEqual(agent.ungrounded_numbers(["Sharpe 1.5, return 40%, 7 candidates"], self.FACTS),

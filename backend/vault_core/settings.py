@@ -208,6 +208,13 @@ RESEARCH = {
     "MAX_BACKTESTS": env_int("RESEARCH_MAX_BACKTESTS", 40),   # in-sample backtests the agent may queue
     "MAX_TOKENS": env_int("RESEARCH_MAX_TOKENS", 40_000),
     "MAX_CANDIDATES_PER_ROUND": env_int("RESEARCH_MAX_CANDIDATES_PER_ROUND", 6),
+    # Explore rounds before the run moves to refine by itself. The first live run explored for all 4 of its decisions
+    # and never refined (D-096).
+    "MAX_EXPLORE_ROUNDS": env_int("RESEARCH_MAX_EXPLORE_ROUNDS", 2),
+    # Agent answers carry several specs; the first live run hit the 2,000-token cap on 4 of 7 answers, and the model
+    # spent most of it reasoning. More room, less reasoning ("" = the model's default; only for reasoning models).
+    "MAX_OUTPUT_TOKENS": env_int("RESEARCH_MAX_OUTPUT_TOKENS", 4000),
+    "REASONING_EFFORT": env("RESEARCH_REASONING_EFFORT", "low"),
     "MAX_SEARCH_VALUES": env_int("RESEARCH_MAX_SEARCH_VALUES", 6),
     "MIN_TRADES": env_int("RESEARCH_MIN_TRADES", 3),          # fewer round trips in-sample: not eligible to win
     "MIN_DAYS": env_int("RESEARCH_MIN_DAYS", 730),            # research period, so both parts have enough bars
