@@ -20,9 +20,17 @@ def delete_expired_guests():
     return n
 
 
+def delete_expired_cache_rows():
+    """Throttle-cache rows past their expiry. The upsert cache never culls on the request path (vault_core/throttle_cache)."""
+    from django.core.cache import cache
+    return cache.delete_expired() if hasattr(cache, "delete_expired") else 0
+
+
 def run():
     guests = delete_expired_guests()
     sessions, _ = Session.objects.filter(expire_date__lt=timezone.now()).delete()
-    if guests or sessions:
-        log.info("event=housekeeping guests_deleted=%s sessions_deleted=%s", guests, sessions)
+    cache_rows = delete_expired_cache_rows()
+    if guests or sessions or cache_rows:
+        log.info("event=housekeeping guests_deleted=%s sessions_deleted=%s cache_rows_deleted=%s",
+                 guests, sessions, cache_rows)
     return guests, sessions

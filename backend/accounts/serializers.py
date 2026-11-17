@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib.auth import password_validation
@@ -17,10 +17,10 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "display_name", "tier", "email_verified", "is_guest", "date_joined",
                   "guest_expires_at"]
 
-    def get_email(self, user):
+    def get_email(self, user) -> str | None:
         return None if user.is_guest else user.email  # guests have a synthetic address; don't show it
 
-    def get_guest_expires_at(self, user):
+    def get_guest_expires_at(self, user) -> datetime | None:
         return user.date_joined + timedelta(days=settings.VAULT["GUEST_TTL_DAYS"]) if user.is_guest else None
 
 

@@ -6,7 +6,8 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, status
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema, extend_schema_view, inline_serializer
+from rest_framework import generics, serializers, status
 from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,25 @@ from backtester.serializers import (BacktestRunSerializer, ComparisonCreateSeria
                                     SpecPreviewSerializer, StrategySerializer, TradeSerializer)
 
 BENCHMARK_STRATEGY = "Buy and Hold"  # seeded by migration 0019
+
+# Response shapes for the OpenAPI schema (D-072). Nested parts are described loosely (objects/lists) where their exact
+# shape is documented in the README rather than duplicated here.
+_any_list = serializers.ListField(child=serializers.DictField())
+CATALOG = inline_serializer("Catalog", {
+    "version": serializers.IntegerField(), "max_conditions": serializers.IntegerField(), "operators": _any_list,
+    "price_fields": serializers.ListField(child=serializers.CharField()), "indicators": _any_list,
+    "cost_models": _any_list, "india_rates": serializers.DictField(), "suggested_symbols": _any_list,
+    "custom_code_enabled": serializers.BooleanField(), "limits": serializers.DictField(),
+    "benchmarks": serializers.DictField()})
+PREVIEW = inline_serializer("SpecPreview", {
+    "spec": serializers.JSONField(), "python": serializers.CharField(), "warmup_bars": serializers.IntegerField(),
+    "hash": serializers.CharField(), "tunable_params": _any_list})
+DASHBOARD = inline_serializer("Dashboard", {
+    "quota": serializers.DictField(), "active_runs": _any_list, "recent_runs": _any_list, "experiments": _any_list,
+    "strategies": _any_list, "custom_code_enabled": serializers.BooleanField()})
+EXPERIMENT_CREATE = PolymorphicProxySerializer(
+    component_name="ExperimentCreate", resource_type_field_name="kind",
+    serializers={"optimization": OptimizationCreateSerializer, "comparison": ComparisonCreateSerializer})
 
 
 class Conflict(APIException):
@@ -131,6 +151,7 @@ class StrategyDetailView(Throttled, generics.RetrieveUpdateDestroyAPIView):
 class StrategyCatalogView(Throttled, APIView):
     """What the builder form offers: indicators, operators, limits, cost models, suggested symbols."""
 
+    @extend_schema(responses=CATALOG)
     def get(self, request):
         cfg = settings.VAULT
         return Response({**spec.catalog(),
@@ -149,6 +170,7 @@ class SpecPreviewView(Throttled, APIView):
     The builder calls this as the user types, so it shares the generous read limit."""
     write_scope = "read"
 
+    @extend_schema(request=SpecPreviewSerializer, responses=PREVIEW)
     def post(self, request):
         ser = SpecPreviewSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -191,6 +213,8 @@ class TradeListView(Throttled, generics.ListAPIView):
         return Trade.objects.filter(run=run).order_by("ts", "id")
 
 
+@extend_schema_view(post=extend_schema(request=EXPERIMENT_CREATE, responses={201: ExperimentSerializer,
+                                                                           200: ExperimentSerializer}))
 class ExperimentListCreateView(Throttled, IdempotentCreate, generics.ListCreateAPIView):
     """POST fans out one child run per combination or cell (priority 1); GET lists the user's experiments.
     Also mounted at /api/optimizations/ (default_kind="optimization") so earlier clients keep working."""
@@ -277,6 +301,16 @@ class ExperimentListCreateView(Throttled, IdempotentCreate, generics.ListCreateA
         return job
 
 
+class ExperimentDetailSerializer(ExperimentSerializer):
+    """Schema-only: the detail response is the experiment plus its child runs."""
+    runs = ExperimentRunSerializer(many=True, read_only=True)
+
+    class Meta(ExperimentSerializer.Meta):
+        fields = ExperimentSerializer.Meta.fields + ["runs"]
+        read_only_fields = fields
+
+
+@extend_schema_view(get=extend_schema(responses=ExperimentDetailSerializer))
 class ExperimentDetailView(Throttled, generics.RetrieveAPIView):
     """One call returns the experiment plus every child run with a downsampled curve (no N+1 polling)."""
     serializer_class = ExperimentSerializer
@@ -329,6 +363,7 @@ def _experiment_summary(job):
 class DashboardView(Throttled, APIView):
     """Everything the dashboard shows, in one request. Deliberately no 'best by Sharpe' ranking (see D-022)."""
 
+    @extend_schema(responses=DASHBOARD)
     def get(self, request):
         user = request.user
         runs = (BacktestRun.objects.filter(owner=user).select_related("strategy")

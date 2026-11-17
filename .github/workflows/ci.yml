@@ -30,6 +30,8 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt pip-audit
       - run: python manage.py makemigrations --check --dry-run
+      - name: OpenAPI schema generates with no warnings (docs can't drift from the code)
+        run: python manage.py spectacular --validate --fail-on-warn --file /dev/null
       - run: python manage.py test
       - name: production settings refuse to start without SECRET_KEY
         run: "! DEBUG=0 python manage.py check"

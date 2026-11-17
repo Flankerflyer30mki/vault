@@ -42,11 +42,15 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.sessions",
     "rest_framework",
+    "django.contrib.staticfiles",
+    "drf_spectacular",
+    "drf_spectacular_sidecar",
     "accounts",
     "backtester",
 ]
 
 MIDDLEWARE = [
+    "vault_core.observability.RequestContextMiddleware",  # outermost: request ID, timing, access log, metrics
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -128,6 +132,7 @@ REST_FRAMEWORK = {
     # anonymous ones too (login CSRF).
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
     # ponytail: LocMemCache makes these per-process limits. Shared cache if replicas > 1. Signed-in users are
@@ -161,6 +166,7 @@ VAULT = {
     "RUN_CPU_S": env_int("RUN_CPU_S", 30),
     "RUN_MEMORY_MB": env_int("RUN_MEMORY_MB", 256),
     "STALE_AFTER_S": env_int("STALE_AFTER_S", 120),
+    "WORKER_GRACE_S": env_int("WORKER_GRACE_S", 20),  # after SIGTERM: finish the current run within this, else requeue
     "MAX_ATTEMPTS": env_int("MAX_ATTEMPTS", 3),
     "OOS_FRACTION": float(env("OOS_FRACTION", "0.3")),
     "GUEST_TTL_DAYS": env_int("GUEST_TTL_DAYS", 7),
@@ -173,10 +179,64 @@ VAULT = {
                }.items()},
 }
 
+# --- Observability (D-069 to D-073)
+# JSON log lines; every line carries request_id / run_id when there is one. LOG_FORMAT=text for local reading.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {"kv": {"format": "ts=%(asctime)s level=%(levelname)s logger=%(name)s %(message)s"}},
-    "handlers": {"stdout": {"class": "logging.StreamHandler", "formatter": "kv"}},
+    "filters": {"context": {"()": "vault_core.observability.ContextFilter"}},
+    "formatters": {
+        "json": {"()": "vault_core.observability.JSONFormatter"},
+        "text": {"format": "ts=%(asctime)s level=%(levelname)s logger=%(name)s request_id=%(request_id)s "
+                           "run_id=%(run_id)s %(message)s"},
+    },
+    "handlers": {"stdout": {"class": "logging.StreamHandler", "filters": ["context"],
+                            "formatter": "text" if env("LOG_FORMAT") == "text" else "json"}},
     "root": {"handlers": ["stdout"], "level": env("LOG_LEVEL", "INFO")},
 }
+
+METRICS_TOKEN = env("METRICS_TOKEN", "")  # /metrics is 404 unless set
+API_DOCS = env("API_DOCS", "1" if DEBUG else "0") == "1"  # /api/schema/ and /api/docs/
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Vault API",
+    "DESCRIPTION": "Strategy backtester: builder strategies, backtests, comparisons and optimizations. Session-cookie "
+                   "auth with CSRF; every resource is private to its owner.",
+    "VERSION": "3.5",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SWAGGER_UI_DIST": "SIDECAR",
+    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
+    "COMPONENT_SPLIT_REQUEST": True,
+    # Several models have a `status` or `kind` with different choices; name each set explicitly.
+    "ENUM_NAME_OVERRIDES": {
+        "RunStatusEnum": "backtester.models.BacktestRun.STATUS_CHOICES",
+        "ExperimentStatusEnum": ["running", "completed", "partially_completed", "failed"],
+        "StrategyKindEnum": "backtester.models.Strategy.KIND_CHOICES",
+        "ExperimentKindEnum": "backtester.models.Experiment.KIND_CHOICES",
+    },
+}
+
+# Throttle counters live in a Postgres table shared by every process and instance (D-073), so limits are exact.
+# The table is created by migration backtester.0021. Writes are single upserts and expired rows are removed by the
+# worker's housekeeping (vault_core/throttle_cache.py, D-075). THROTTLE_CACHE=locmem (per-process counters) and
+# THROTTLE_CACHE=django (Django's stock DatabaseCache) exist for the load-test comparisons only.
+_THROTTLE_CACHES = {
+    "locmem": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    "django": {"BACKEND": "django.core.cache.backends.db.DatabaseCache", "LOCATION": "vault_cache"},
+    "upsert": {"BACKEND": "vault_core.throttle_cache.UpsertDatabaseCache", "LOCATION": "vault_cache"},
+}
+CACHES = {"default": _THROTTLE_CACHES[env("THROTTLE_CACHE", "upsert")]}
+
+# Templates and static files exist only for the API docs page (Swagger UI assets from drf-spectacular-sidecar).
+TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "APP_DIRS": True,
+              "OPTIONS": {"context_processors": ["django.template.context_processors.request"]}}]
+STATIC_URL = "static/"
+
+# Error tracking (D-071): only when SENTRY_DSN is set, and never with personal data.
+SENTRY_DSN = env("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+
+    from vault_core.observability import sentry_options
+
+    sentry_sdk.init(**sentry_options(SENTRY_DSN, env("SENTRY_ENVIRONMENT", "production"),
+                                     float(env("SENTRY_TRACES_SAMPLE_RATE", "0"))))
