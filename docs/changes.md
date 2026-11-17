@@ -209,3 +209,41 @@ New `/compare` (strategy checkboxes, symbols with suggestion chips, live cell co
 - **New dependencies:** `drf-spectacular`, `drf-spectacular-sidecar`, `sentry-sdk` (+ transitive). `locust` is dev-only.
 - Turning on Sentry sends error data to an external service: a deployment decision.
 - Repeat the load test on staging (D-068) and set `NUM_PROXIES` there as before.
+
+---
+
+## Phase 4 · AI assistance · branch `phase-4-assist` · 2026-11-17
+
+### Behavior changes
+| Area | Before | After | Decision |
+|---|---|---|---|
+| Building a strategy | Form only | Also "describe it in words": the AI fills in the form, the user reviews and saves | D-077 |
+| Unsupported requests | — | Refused with the reason (shorting, options, intraday, several symbols, fundamentals, sentiment, prompt injection) | D-077, D-080 |
+| Worker | Backtests only | Answers AI requests first, then backtests | D-078 |
+| Quotas | 4 per tier | Plus `ai_requests_per_day` (5 / 10 / 50) and one active AI request per user; dashboard shows it | D-081 |
+| `/metrics` | Queue and HTTP | Plus AI queue depth, outcomes in the last hour, cache hits, tokens today vs budget | D-081 |
+| Housekeeping | Guests, sessions, cache rows | Plus AI requests older than 30 days | D-083 |
+| Spec validation | A condition could compare something with itself ("SMA 20 crosses above SMA 20") | Rejected: "compares something with itself: the two sides must differ" (found by the AI evaluation) | D-087 |
+
+### API
+- **New:** `POST /api/assist/strategy/` (`{"prompt"}` → the request; 503 when AI is off, over budget or the queue is full; 429 for quotas), `GET /api/assist/<id>/` (own requests only).
+- **Changed:** the catalog gains `ai_enabled`; dashboard quota gains `ai_requests_per_day`.
+
+### UI
+A "Describe your strategy in words" panel at the top of the builder (only when AI is on): character count, privacy note, the AI's notes, refusals and errors. A successful answer replaces the form's rules and fills an empty name; nothing is saved until the user clicks Save.
+
+### Database
+| Migration | What | Reversible |
+|---|---|---|
+| `assist.0001_initial` | `AssistRequest` (prompt, hash, status, outcome, result, provider, model, prompt version, tokens, calls, repairs, latency, cached, attempts, worker, request ID) with claim index `(status, id)` | yes (drops the table) |
+
+### Files
+- **New app** `backend/assist/`: `models.py`, `providers.py` (Groq, fake, recording, replay), `prompts.py`, `strategy.py` (generate + repair), `jobs.py` (queue, budget, cache, recovery, retention), `ops.py` (metrics), `serializers.py`, `views.py`, `urls.py`, `tests.py` (39 tests), `evals/` (`cases.py` 60 cases, `grading.py`, `runner.py`, `recordings/` with 3 live runs: gpt-oss-120b full and a 20-case latency sample, gpt-oss-20b full), `management/commands/assist_eval.py` (`--record`, `--replay`, `--reuse`)
+- `backend/backtester/spec.py` (identical sides rejected), `test_builder.py` (+1), `jobs.py` (worker loop: AI first, AI stale recovery), `views.py` (`ai_enabled`); `backend/accounts/quotas.py` (`check_ai`, usage), `housekeeping.py`, `tests.py` (usage keys); `backend/vault_core/settings.py` (`AI`, quotas, app), `urls.py` (`/api/assist/`, metrics)
+- **New** `frontend/src/builder/AssistPanel.jsx`; `pages/StrategyBuilder.jsx`, `pages/StrategyBuilder.test.jsx` (+3), `pages/Dashboard.jsx`, `App.css`
+- `README.md`, `CLAUDE.md`, `docs/*`
+
+### Operational notes for release
+- **New env vars (optional; AI is off without them):** `AI_PROVIDER=groq`, `GROQ_API_KEY` (secret; on the API and the worker), `AI_MODEL`, `AI_REASONING_EFFORT`, `AI_DAILY_TOKEN_BUDGET` (below the provider's daily token limit), `AI_MAX_PROMPT_CHARS`, `AI_MAX_REPAIRS`, `AI_TIMEOUT_S`, `AI_MAX_OUTPUT_TOKENS`, `AI_MAX_QUEUED`, `AI_CACHE_DAYS`, `AI_RETENTION_DAYS`, `AI_STALE_AFTER_S`; `QUOTA_<TIER>_AI_REQUESTS_PER_DAY`.
+- In the Groq console: switch on Zero Data Retention.
+- No new Python dependency (the Groq API is called with `requests`).

@@ -116,6 +116,27 @@ Interview line: "One commission rate can't express stamp duty on buys only, so t
 | Percentiles (p50/p95/p99) | Latency most users get vs what the slowest see | load-test tables, run-time p95 metric | "Averages hide the tail; p95 is what a busy user feels." |
 | Secure-by-default ops endpoints | Off unless configured; constant-time token comparison | `/metrics` 404 without `METRICS_TOKEN`, `hmac.compare_digest` | "An ops endpoint shouldn't be a new attack surface." |
 
+## AI engineering (Phase 4)
+
+| Concept | What it is | Where in Vault | Interview line |
+|---|---|---|---|
+| Structured output | Make the model answer in a fixed machine-readable shape | JSON mode + one-object contract (`spec` or `unsupported`) | "The model returns data in my schema, not prose I have to parse." |
+| LLM output as untrusted input | Validate everything the model says, as you would a user | `spec.validate` on every answer; nothing executed | "A wrong or manipulated answer costs a retry, never safety." |
+| Validate-and-repair loop | Feed the validator's errors back so the model fixes its answer | `strategy.generate`, ≤ 2 rounds, path-keyed errors | "The validator's own messages are the best repair prompt." |
+| Grounding the prompt in the code | Generate the prompt's catalog from the same registry the validator uses | `prompts._catalog()` from `indicators.REGISTRY` | "Add an indicator and the AI knows it, with no prompt edit." |
+| Few-shot examples | Worked examples in the prompt | `prompts.EXAMPLES` (kept out of the eval set) | "Examples teach the format; the eval proves they don't leak answers." |
+| Refusal as a first-class answer | The model must say "can't" instead of approximating | `"status": "unsupported"` with a reason | "Long-only means shorting is refused, not quietly turned into something else." |
+| Prompt injection | User text trying to override instructions | text fenced as data; injection cases in the eval; a canary string | "I test that it refuses and never leaks the prompt (a canary must never appear)." |
+| Provider abstraction | One interface; vendors behind it; fakes for tests | `providers.py` | "Switching vendors changes one file; CI never calls a model." |
+| Record/replay testing | Record live answers once, replay them in CI | `RecordingProvider`, `ReplayProvider`, committed recordings | "Evals in CI are free and deterministic, and fail when the prompt changes unmeasured." |
+| Behavioural (execution-based) grading | Judge generated code/specs by running them, not by text match | `grading.match`: identical positions on 5 series | "Two different JSONs that trade identically are both right; one period off is wrong." |
+| Ablation | Remove one part at a time to see what it earns | bare → catalog → examples → repair | "Each part of the prompt has a measured contribution." |
+| Golden dataset with categories | Fixed cases covering normal, edge and adversarial inputs | 60 cases in 8 categories | "Per-category scores show where it fails, not just an average." |
+| Token budget and rate limits | Cap spend per day; back off on 429s | `AI_DAILY_TOKEN_BUDGET`, `retry-after` | "Free tiers are per deployment, so one user can't spend everyone's tokens." |
+| Response cache | Reuse answers to identical inputs | prompt hash = version + model + normalised text | "The cache key includes the prompt version, so a better prompt invalidates old answers." |
+| Human in the loop | The AI proposes; a person approves | the form is filled, never saved | "For anything that costs money or changes data, the model drafts and a person decides." |
+| Data minimisation | Send and keep only what's needed | only the description goes out; 30-day retention; never logged | "The provider never sees an email; our logs never see the description." |
+
 ## Testing
 
 | Concept | What it is | Where in Vault |

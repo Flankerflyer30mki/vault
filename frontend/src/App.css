@@ -769,6 +769,54 @@ a.button.small {
   gap: 10px;
 }
 
+/* "Describe your strategy" (Phase 4) */
+.assist {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+
+.assist label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.assist textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  resize: vertical;
+}
+
+.assist-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.assist-actions button {
+  background: #444;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.assist-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.assist-result ul {
+  margin: 4px 0 0;
+}
+
 .builder-actions button {
   background: #444;
   color: white;

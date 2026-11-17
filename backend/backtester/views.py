@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts import quotas
+from assist import providers as assist_providers
 from backtester import costs, spec
 from backtester.engine import ENGINE_VERSION
 from backtester.jobs import experiment_status, frozen_spec, frozen_strategy
@@ -31,7 +32,7 @@ CATALOG = inline_serializer("Catalog", {
     "price_fields": serializers.ListField(child=serializers.CharField()), "indicators": _any_list,
     "cost_models": _any_list, "india_rates": serializers.DictField(), "suggested_symbols": _any_list,
     "custom_code_enabled": serializers.BooleanField(), "limits": serializers.DictField(),
-    "benchmarks": serializers.DictField()})
+    "benchmarks": serializers.DictField(), "ai_enabled": serializers.BooleanField()})
 PREVIEW = inline_serializer("SpecPreview", {
     "spec": serializers.JSONField(), "python": serializers.CharField(), "warmup_bars": serializers.IntegerField(),
     "hash": serializers.CharField(), "tunable_params": _any_list})
@@ -162,7 +163,8 @@ class StrategyCatalogView(Throttled, APIView):
                          "limits": {"max_grid": cfg["MAX_GRID"], "max_grid_params": cfg["MAX_GRID_PARAMS"],
                                     "max_compare_strategies": cfg["MAX_COMPARE_STRATEGIES"],
                                     "max_compare_symbols": cfg["MAX_COMPARE_SYMBOLS"]},
-                         "benchmarks": cfg["BENCHMARKS"]})
+                         "benchmarks": cfg["BENCHMARKS"],
+                         "ai_enabled": assist_providers.enabled()})
 
 
 class SpecPreviewView(Throttled, APIView):

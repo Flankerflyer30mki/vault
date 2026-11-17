@@ -8,6 +8,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException
 
+from assist.models import AssistRequest
 from backtester.models import BacktestRun, Experiment, Strategy
 
 WINDOW = timedelta(hours=24)
@@ -34,6 +35,7 @@ def usage(user):
         "runs_per_day": BacktestRun.objects.filter(owner=user, experiment__isnull=True, created_at__gte=since).count(),
         "experiments_per_day": Experiment.objects.filter(owner=user, created_at__gte=since).count(),
         "strategies": Strategy.objects.filter(owner=user).count(),  # saved, not per day; built-ins don't count
+        "ai_requests_per_day": AssistRequest.objects.filter(owner=user, created_at__gte=since).count(),
     }
 
 
@@ -49,6 +51,17 @@ def check(user, kind):
         hint = " Verify your email to raise your limits." if user.tier != "verified" else ""
         raise QuotaExceeded(f"Daily limit reached: {lim[per_day]} {noun} per 24 hours for {user.tier} accounts."
                             + hint)
+
+
+def check_ai(user):
+    """AI requests (D-081): one at a time per user, and a daily count by tier. Call with the user's row locked."""
+    if AssistRequest.objects.filter(owner=user, status__in=AssistRequest.ACTIVE).exists():
+        raise QuotaExceeded("Your previous AI request is still being answered. Wait for it to finish.")
+    lim = limits(user)["ai_requests_per_day"]
+    since = timezone.now() - WINDOW
+    if AssistRequest.objects.filter(owner=user, created_at__gte=since).count() >= lim:
+        hint = " Verify your email to raise your limits." if user.tier != "verified" else ""
+        raise QuotaExceeded(f"Daily limit reached: {lim} AI requests per 24 hours for {user.tier} accounts." + hint)
 
 
 def check_strategy(user):

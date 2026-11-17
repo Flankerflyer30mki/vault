@@ -311,7 +311,7 @@ class IsolationTests(TestCase):
         d = self.cb.get("/api/dashboard/").json()
         self.assertEqual((d["active_runs"], d["recent_runs"], d["experiments"]), ([], [], []))
         self.assertEqual(d["quota"]["usage"], {"active_jobs": 0, "runs_per_day": 0, "experiments_per_day": 0,
-                                              "strategies": 0})
+                                              "strategies": 0, "ai_requests_per_day": 0})
 
 
 @override_settings(PASSWORD_HASHERS=FAST_HASHERS)
@@ -356,7 +356,8 @@ class QuotaTests(TestCase):
                                                    take_profit_options=["0.2", "0.3"]), format="json")
         self.assertEqual(r.status_code, 201)
         usage = c.get("/api/dashboard/").json()["quota"]["usage"]
-        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "experiments_per_day": 1, "strategies": 0})
+        self.assertEqual(usage, {"active_jobs": 1, "runs_per_day": 0, "experiments_per_day": 1, "strategies": 0,
+                                 "ai_requests_per_day": 0})
 
     def test_verifying_raises_limits(self):
         user = User.objects.create_user("w@example.com")

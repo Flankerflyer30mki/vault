@@ -249,3 +249,48 @@ Status: done in Phase 2 (D-039); see below.
 |---|---|
 | A deploy-interrupted run is back in the queue 2.26 s after `SIGTERM` (2 s grace) instead of 120–150 s; no retry used | Work done before the deadline is thrown away and the run restarts from the first bar |
 | No new failure states: the run simply becomes `queued` again | A run that always takes longer than the grace period and is always interrupted would never finish (only during back-to-back deploys) |
+
+## Phase 4
+
+### D-077 · The AI fills the form; the user saves
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| A person checks every strategy before it exists; a wrong answer costs a glance, not a bad backtest | One more click than "describe and run" | Phase 5: the agent runs experiments itself, inside quotas, with its reasoning shown |
+| One feature with a clear right answer, so it can be measured | "Explain this result" waits for Phase 5 (D-084) | — |
+
+### D-078 · AI requests as worker jobs
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| The API never waits on the provider: 2 people asking can't stall it | ~1 s of polling on top of the model's time | Many AI users → a separate worker process for AI requests |
+| Request IDs, shutdown, stale recovery and metrics for free | A worker answering an AI request isn't running a backtest (AI goes first, and is short) | — |
+
+### D-079 · Groq, behind an interface, with no SDK
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Free, fast, no training on API data; two models compared at no cost | Free limits (8K tokens/min, 200K/day per model) are shared by the whole deployment | Real traffic → a paid tier with a spending cap |
+| One file knows the vendor; tests and CI never touch the network | Open models make more format mistakes than the strongest paid ones (measured: see evals) | The evaluation shows a model can't reach the bar |
+| No SDK dependency (plain `requests`) | Retry and error handling written by hand (tested) | — |
+
+### D-080 · JSON answer, validated, repaired
+| Gained | Gave up |
+|---|---|
+| The model can only produce data that the existing allowlist checks; nothing it writes runs | A valid spec can still be the wrong strategy: the validator checks form, not meaning (the evaluation and the user's review check meaning) |
+| Repair turns near misses into answers using the validator's own messages | Each repair round is another call: more tokens and latency |
+
+### D-081 · Quotas, budget, cache
+| Gained | Gave up |
+|---|---|
+| One user can't spend the deployment's free tokens; the app degrades to "build it in the form" | Over budget, AI is off for everyone until midnight UTC |
+| Repeated descriptions cost nothing | A cached answer can't improve until the prompt version or model changes |
+
+### D-082 · Behavioural grading with recorded runs
+| Gained | Gave up |
+|---|---|
+| Equivalent formulations pass and near misses fail, judged by what the strategy does | Five synthetic series can miss a difference that only shows on other data (mitigated: every reference must trade on them) |
+| CI runs the evaluation for free and catches prompt changes that weren't re-measured | A recording reflects one day's model; providers change models, so numbers need re-running |
+| Ambiguous wording has several accepted references | Choosing which readings count as "right" is a judgment, written down per case |
+
+### D-083 · Privacy
+| Gained | Gave up |
+|---|---|
+| Only the description leaves Vault; never logged; deleted after 30 days | Support can't look at a description older than 30 days |
