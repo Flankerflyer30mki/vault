@@ -50,6 +50,9 @@ class Strategy(models.Model):
     code = models.TextField(blank=True, default="")
     spec = models.JSONField(null=True, blank=True)
     is_builtin = models.BooleanField(default=False)  # pre-approved; runnable when custom code is disabled
+    # Hidden built-ins never appear in lists or accept runs from users. The one in use is "AI research candidate"
+    # (migration 0022): the strategy row behind research runs, each of which carries its own frozen spec.
+    is_hidden = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -74,9 +77,11 @@ class Experiment(models.Model):
     - optimization: one strategy on one symbol; a grid (spec parameters × stop-loss × take-profit) runs on the in-sample
       period, then the best combination runs once on the untouched out-of-sample tail.
     - comparison: strategies × symbols over the same period and costs, plus an index benchmark per currency.
+    - research: one round of an AI research run (Phase 5): the agent's candidates on the in-sample period, or the
+      single held-out run. Shown on the research page, not in experiment lists.
     """
-    OPTIMIZATION, COMPARISON = "optimization", "comparison"
-    KIND_CHOICES = [(OPTIMIZATION, "optimization"), (COMPARISON, "comparison")]
+    OPTIMIZATION, COMPARISON, RESEARCH = "optimization", "comparison", "research"
+    KIND_CHOICES = [(OPTIMIZATION, "optimization"), (COMPARISON, "comparison"), (RESEARCH, "research")]
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="experiments")
     kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=OPTIMIZATION)

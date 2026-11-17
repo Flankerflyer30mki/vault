@@ -304,6 +304,8 @@ def work_one(wid):
             fail(run, wid, "infrastructure", "Internal error while running the backtest")
         if run.experiment_id:
             finish_optimization(run.experiment)
+            from assist.research import on_backtest_finished  # assist imports this module
+            on_backtest_finished(run)  # wakes a research run whose round just finished
     finally:
         request_id_var.reset(tokens[0])
         run_id_var.reset(tokens[1])
@@ -312,6 +314,7 @@ def work_one(wid):
 
 def work_forever(poll_s=2.0, stop=lambda: False):
     from assist import jobs as assist_jobs  # assist imports this module, so import it here
+    from assist import research
     wid = worker_id()
     log.info("event=worker_started worker=%s", wid)
     last_recover = last_housekeeping = 0.0
@@ -324,13 +327,15 @@ def work_forever(poll_s=2.0, stop=lambda: False):
                 recover_stale()
                 finish_pending_optimizations()
                 assist_jobs.recover_stale()
+                research.recover()
                 last_recover = time.monotonic()
             if time.monotonic() - last_housekeeping > HOUSEKEEPING_EVERY_S:
                 from accounts.housekeeping import run as housekeeping
                 housekeeping()
                 last_housekeeping = time.monotonic()
-            # AI requests first: a person is waiting on each, and each takes seconds (D-078).
-            busy = assist_jobs.work_one(wid) or work_one(wid)
+            # AI requests first: a person is waiting on each, and each takes seconds (D-078). Then one research step
+            # (short: one model call, or queueing a round), then a backtest.
+            busy = assist_jobs.work_one(wid) or research.work_one(wid) or work_one(wid)
         except Exception:
             log.exception("event=worker_loop_error")
             busy = False

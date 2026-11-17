@@ -137,6 +137,22 @@ Interview line: "One commission rate can't express stamp duty on buys only, so t
 | Human in the loop | The AI proposes; a person approves | the form is filled, never saved | "For anything that costs money or changes data, the model drafts and a person decides." |
 | Data minimisation | Send and keep only what's needed | only the description goes out; 30-day retention; never logged | "The provider never sees an email; our logs never see the description." |
 
+## Agents (Phase 5)
+
+| Concept | What it is | Where in Vault | Interview line |
+|---|---|---|---|
+| Agent loop | Observe → decide → act → observe, until done | research steps: state table → JSON action → backtests → updated table | "The model decides what to try next; code decides what's allowed." |
+| Constrained action space | The agent can only do a few checked things | `test`, `search`, `next_stage`, `choose`; checked by `agent.check` | "Fewer, typed actions make an agent testable." |
+| Guardrails in code, not in the prompt | Stage changes, budgets and the holdout are enforced by code | `research.py` | "The prompt asks nicely; the code makes sure." |
+| Stateless steps (context rebuilt from state) | Each call gets a fresh summary instead of the whole history | `agent.state_message` | "Token cost per step is flat, however long the run." |
+| Durable / resumable workflow | Long tasks as persisted steps that survive restarts | `ResearchRun` state machine on the job queue | "No worker waits on its own backtests; a deploy resumes the run." |
+| Data snooping / selection bias | Picking the best of many tries on the same data overstates it | held-out 30%, tested once, "N candidates tried" | "My agent reports its own overfitting." |
+| Holdout set | Data kept out of every decision, used once for the final check | `split_date`; prompts never contain those dates (checked) | "The agent can't peek, and the report proves it." |
+| Grounded generation | Generated text may only state facts it was given | `agent.ungrounded_numbers` + plain fallback | "Every number in the summary is checked against the database." |
+| Budgets and graceful degradation | Hard limits; when hit, a sensible default instead of a crash | code picks the best eligible candidate | "When the agent runs out, the run still finishes honestly." |
+| Process checks | Automatic checks on every run, not just in tests | `report.checks` | "Each report says whether the rules were followed." |
+| Human in the loop (again) | The agent acts, a person decides what to keep | "Save as strategy" | "It may spend backtests; it can't change your strategies." |
+
 ## Testing
 
 | Concept | What it is | Where in Vault |
