@@ -376,3 +376,28 @@ the platform kills it 30 s later.
 | The agent explored for all 4 decisions and never refined or chose | Explore capped at 2 rounds, then refine | The run moves on by itself and the agent chooses *(test)*; to confirm live |
 | Two candidates were the same strategy in different words (equal results) | Twins marked "same results as cN" | Shown to the agent and in the UI *(tests)* |
 | A replaced summary showed as a failed rule (red ✗) | Shown as a warning that Vault's plain summary is used | *(frontend test)* |
+
+---
+
+# Phase 6 · Release
+
+### 6.1 · An irreversible upgrade, rehearsed on real data
+**Why:** v1 → v2 migrations can't be undone, and production held the only copy of v1's results.
+1. **Before:** the upgrade path had been tested on fixtures (Phase 1's legacy-migration test), never on production data.
+2. **Changes made:** backed up production with `pg_dump`, restored it into a throwaway database, ran the v2 migrations on it with the release image, and compared every table (D-097).
+3. **Result:** **4.9 s**, all 24 runs, 2 optimizations, 995 trades and 1,288 bars kept; the real deploy then matched the rehearsal.
+
+### 6.2 · A routing bug fixed in 7 minutes
+1. **Before:** right after release, every API call through the live domain got the SPA's HTML (the Vercel rewrite didn't match trailing slashes).
+2. **Changes made:** found by smoke-testing through the public domain; proved by comparing `/api/auth/csrf` and `/api/auth/csrf/`; one-line regex fix shipped as a hotfix PR with CI (D-098).
+3. **Result:** broken from ~18:06 to 18:11:25 UTC; API reachable through Vercel since.
+
+### 6.3 · Market data on a host Yahoo blocks
+1. **Before:** a backtest on any symbol not yet stored failed on production ("No market data").
+2. **Changes made:** pre-loaded the 17 suggested symbols and `^GSPC` (2005 → today) from a residential connection with Vault's own fetch code (D-099).
+3. **Result:** the failing MSFT backtest now completes in **26 ms**; comparisons' benchmarks and the suggested symbols work. Other symbols, and fresh data, wait for the fallback provider.
+
+### 6.4 · The browser tab says "Vault"
+| Before | Change | Result |
+|---|---|---|
+| Tab: "frontend" with Vite's lightning icon | Title "Vault", a Vault icon (rising line on dark), meta description | Live |

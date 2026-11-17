@@ -330,3 +330,16 @@ Status: done in Phase 2 (D-039); see below.
 | Gained | Gave up |
 |---|---|
 | The revamp finishes today | No measured answer to "does the agent beat a random search?" and no live run yet; stated plainly in the README and evals |
+
+## Phase 6
+
+### D-097 · Straight to production with a backup and a rehearsal
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Released the same day; the irreversible step tested on a copy of the real data | No staging: routing and network issues showed up in production (both found by the smoke test within minutes) | Users depend on the site → a staging service and preview frontend |
+| $0: free web service with the worker embedded | Backtests compete with HTTP for CPU; the service sleeps when idle (first request ~24 s) | Traffic or budget → a separate background worker (~$7/month) |
+
+### D-099 · Pre-loaded data
+| Gained | Gave up |
+|---|---|
+| The suggested symbols and benchmarks work today | Other symbols fail on production, and stored data doesn't update until a fallback provider exists |
