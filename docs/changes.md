@@ -313,7 +313,8 @@ API with an embedded worker on Render (`vault-api-pqje.onrender.com`, free plan,
 | Phase 6 docs (decisions, release record, README deploy notes) | #12 | D-097–D-100 |
 | Access log: `xff_hops` and `via_vercel` (counts only) to measure the proxy chain | #13 | D-101 |
 | `NUM_PROXIES=4` set on Render from the measured hop count | — (config) | D-101 |
-| README rewritten as an overview; the full spec moved to `docs/reference.md`; `CLAUDE.md` untracked | this PR | D-102 |
+| README rewritten as an overview; the full spec moved to `docs/reference.md`; `CLAUDE.md` untracked | #14 | D-102 |
+| Emails logged without SMTP are plain text: links were quoted-printable (`=3D`, split lines) and failed when copied | #15 | — |
 
 ### Configuration applied (Render `vault-api`)
 Added `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` (the Vercel domain), `SECURE_PROXY_SSL_HEADER=1`,

@@ -80,7 +80,7 @@ FRONTEND_URL = env("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 # --- email: console in development; SMTP (e.g. Resend) when EMAIL_HOST is set
 EMAIL_HOST = env("EMAIL_HOST", "")
 EMAIL_BACKEND = ("django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
-                 else "django.core.mail.backends.console.EmailBackend")
+                 else "accounts.mail_backends.PlainTextConsoleBackend")  # readable links in the log
 EMAIL_PORT = env_int("EMAIL_PORT", 587)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
