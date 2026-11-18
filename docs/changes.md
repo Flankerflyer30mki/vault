@@ -310,6 +310,10 @@ API with an embedded worker on Render (`vault-api-pqje.onrender.com`, free plan,
 | `vercel.json` rewrites `/api/*` to the Render API; tab title "Vault" and a Vault icon (was "frontend" and Vite's) | #9 | D-029, D-097 |
 | Hotfix: the rewrite's source is a regex so `/api/.../` (trailing slash) matches | #11 | D-098 |
 | Production data: 17 suggested symbols + `^GSPC` pre-loaded (2005 → 2026-11-16) from a residential connection | — (ops) | D-099 |
+| Phase 6 docs (decisions, release record, README deploy notes) | #12 | D-097–D-100 |
+| Access log: `xff_hops` and `via_vercel` (counts only) to measure the proxy chain | #13 | D-101 |
+| `NUM_PROXIES=4` set on Render from the measured hop count | — (config) | D-101 |
+| README rewritten as an overview; the full spec moved to `docs/reference.md`; `CLAUDE.md` untracked | this PR | D-102 |
 
 ### Configuration applied (Render `vault-api`)
 Added `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` (the Vercel domain), `SECURE_PROXY_SSL_HEADER=1`,
@@ -321,5 +325,5 @@ v1 at backtester `0011` (no accounts) → v2 at `0023` + `accounts`, `assist`, `
 `pg_dump` custom format taken before the release (kept outside the repo).
 
 ### Not done yet
-Email provider, `METRICS_TOKEN`, Sentry, HSTS; `NUM_PROXIES` check behind Vercel + Render; a fallback data source;
-CSS/UX fixes; the free database expires 2026-12-10.
+Email provider, `METRICS_TOKEN`, Sentry, HSTS; a fallback data source; CSS/UX fixes; restricting Render to traffic
+from Vercel (D-101); the free database expires 2026-12-10.

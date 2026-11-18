@@ -855,3 +855,22 @@ Starting point: `main` was v1, live on Vercel (`vault-lovat-beta.vercel.app`) an
 ## D-100 · Workflow after release
 - **Decision:** with `main` deployed, follow-up PRs branch from and target `main` (CI must pass; each merge deploys).
   `release/v2` was fast-forwarded to `main` after the hotfix and is no longer needed for day-to-day work.
+
+## D-101 · `NUM_PROXIES` = 4, measured
+- **Context:** per-IP limits (login, signup, guest creation) identify the client by counting proxies back from the end of
+  `X-Forwarded-For`. The code default (1 on Render) was a guess. Too low makes every visitor look like the same proxy,
+  so real users throttle each other; too high lets a client choose its own address.
+- **Decision:** measure instead of guessing. The access log records `xff_hops` and `via_vercel` (the count, never the
+  addresses; PR #13). Requests through the Vercel domain on 2026-11-18 showed `xff_hops: 4, via_vercel: true`, so
+  `NUM_PROXIES=4` is set on Render.
+- **Limit:** a client calling the Render hostname directly passes fewer proxies and can still choose the address used
+  for its per-IP limits. Per-user limits are unaffected. Closing this means making Render accept only traffic from Vercel.
+
+## D-102 · README as an overview; the spec moves to `docs/reference.md`
+- **Context:** the README had grown into a 500-line specification. Visitors (reviewers, recruiters) need what Vault does,
+  how it's built and the measured results first.
+- **Decision:** the README is a short overview (features, engineering highlights with numbers, architecture, stack, how to
+  run and test, links). The full specification moved unchanged, apart from link fixes and the `NUM_PROXIES` rows, to
+  `docs/reference.md` (its earlier history is in `README.md`), and that file is now the one to keep in sync with behaviour.
+  `CLAUDE.md` (local assistant notes) is no longer tracked and is git-ignored; older commits still contain it.
+
