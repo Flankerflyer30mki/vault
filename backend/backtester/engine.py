@@ -1,6 +1,6 @@
 """Deterministic backtest simulation. No Django, no I/O: bars in, ledger out.
 
-Execution model (documented in README "Execution model"):
+Execution model (documented in docs/reference.md, "Execution model"):
 - The strategy sees bar t (OHLC, close included) and indicators computed through bar t.
 - Its decision becomes an order that fills at the OPEN of bar t+1. A decision on the
   last bar never fills. This removes same-bar lookahead.
