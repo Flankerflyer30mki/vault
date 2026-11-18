@@ -343,3 +343,8 @@ Status: done in Phase 2 (D-039); see below.
 | Gained | Gave up |
 |---|---|
 | The suggested symbols and benchmarks work today | Other symbols fail on production, and stored data doesn't update until a fallback provider exists |
+
+### D-103 · Sign in with Google
+| Gained | Gave up | Revisit when |
+|---|---|---|
+| Verified accounts without sending any email; one click to sign up | A Google dependency for those users; Google-only accounts can't set a password or change their email yet | Users ask for it → "set a password" via a reset email once an email provider works |

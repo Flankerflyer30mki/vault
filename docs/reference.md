@@ -261,14 +261,14 @@ Everything a user creates is private. Another user's run, trades or experiment r
 |---|---|---|---|---|---|
 | guest | "Try it as a guest" (one click, no email) | 2 | 20 | 2 | 5 |
 | unverified | sign up, or save a guest workspace as an account | 3 | 30 | 3 | 20 |
-| verified | click the link in the verification email | 10 | 200 | 20 | 100 |
+| verified | click the link in the verification email, or **Sign in with Google** | 10 | 200 | 20 | 100 |
 
 An experiment (comparison or optimization) counts as one active job while any of its runs is active. Built-in strategies don't count towards saved strategies. Every value can be overridden by an env var (`QUOTA_<TIER>_<LIMIT>`, e.g. `QUOTA_VERIFIED_RUNS_PER_DAY`). The global `MAX_ACTIVE_RUNS` still caps everyone's work combined.
 
 - **Guests** get a temporary workspace that is deleted after `GUEST_TTL_DAYS` (7) unless they save it as an account. Their data is kept when they do.
 - **Housekeeping:** the worker deletes expired guests and expired sessions once an hour, so no cron job is needed.
 - **Pre-accounts data:** runs, optimizations and custom strategies created before accounts existed belong to a hidden, inactive legacy user (migration `0014`).
-- **Endpoints** (`/api/auth/`): `csrf`, `me`, `signup`, `login`, `logout`, `guest`, `guest/convert`, `verify-email`, `verify-email/resend`, `password-reset`, `password-reset/confirm`, `password-change`, `email-change` and `delete-account`. `/api/dashboard/` returns everything the dashboard shows in one call.
+- **Endpoints** (`/api/auth/`): `csrf`, `me`, `signup`, `login`, `logout`, `guest`, `guest/convert`, `google`, `verify-email`, `verify-email/resend`, `password-reset`, `password-reset/confirm`, `password-change`, `email-change` and `delete-account`. `/api/dashboard/` returns everything the dashboard shows in one call.
 
 ## Operations: logs, metrics, capacity
 
@@ -318,6 +318,7 @@ Other security controls:
 - **Sessions:** the session cookie is `HttpOnly` (JavaScript, and so XSS, can't read it), `SameSite=Lax`, and `Secure` in production. Logging in issues a new session id (no session fixation). Changing the password signs out every other session.
 - **CSRF:** a double-submit token (`csrftoken` cookie echoed in `X-CSRFToken`) plus Django's Origin check. DRF only checks CSRF for users who are already signed in, so login, signup and the other anonymous endpoints enforce it explicitly. That blocks login CSRF. The token rotates on login.
 - **Passwords:** PBKDF2 (Django's default, 1.2M iterations), at least 10 characters, and Django's similarity, common-password and all-numeric validators.
+- **Sign in with Google** (on when `GOOGLE_CLIENT_ID` is set, D-103): Google's button gives the browser a signed ID token; the API checks its signature against Google's keys, that it was issued for Vault's client ID, the issuer, the expiry and that Google marks the email verified, then signs in with the usual session cookie. The account is verified at once and has no password. Linking to an existing **unverified** account removes its password and signs out its sessions, because whoever set them never proved they own the address (account pre-hijacking). A guest who signs in with Google keeps their data. Google-only accounts can delete themselves without a password and can't change a password or email.
 - **No account enumeration:** a failed login gives the same message whether or not the email exists, and so does a password reset request.
 - **Email links:** verification and reset tokens are tied to the user's state, so they stop working once used (or when the password or email changes) and expire after 24 hours.
 - The API serves JSON only and has no admin. Errors return safe messages, and details go to the server logs.
@@ -411,6 +412,7 @@ Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Tu
 | Email | `EMAIL_HOST`, `EMAIL_PORT` (587), `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` (any SMTP provider, e.g. Resend). Without `EMAIL_HOST`, emails go to the log |
 | `NUM_PROXIES` | the number of proxies between the browser and the API. Measure it, don't guess: each access log line has `xff_hops` (and `via_vercel`); set `NUM_PROXIES` to `xff_hops` for requests made through the frontend domain. Vercel → Render measured **4** (D-101) |
 | Optional | `SECURE_HSTS_SECONDS=31536000` once HTTPS is verified, `WEB_CONCURRENCY`, `METRICS_TOKEN`, `SENTRY_DSN`, and the limits listed above |
+| Google sign-in (optional) | `GOOGLE_CLIENT_ID`: a Google OAuth *web* client ID (public, not a secret) with the frontend's origin as an authorized JavaScript origin. Without it the button is hidden |
 | AI (optional) | `AI_PROVIDER=groq`, `GROQ_API_KEY` (a secret), `AI_MODEL`, `AI_DAILY_TOKEN_BUDGET` below the provider's daily limit. Set them on the API (it reports whether AI is on) **and** the worker (it makes the calls) |
 
 **Worker (Render background worker, same repo and image):** command `python manage.py run_worker`, with the same env as the API minus the HTTP-only settings. Keep `WORKER_GRACE_S` below the platform's shutdown window (Render: 30 s).
