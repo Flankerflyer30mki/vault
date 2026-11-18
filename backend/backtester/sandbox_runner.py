@@ -6,7 +6,7 @@ writes) and a hard wall-clock deadline. That contains accidents (infinite loops,
 memory blow-ups, crashes, garbage output). It does NOT contain hostile code: there is
 no network or filesystem namespace. Untrusted public code needs a real isolated runner
 (container/VM: no network, read-only FS, non-root, no secrets) -- until then the API
-keeps ALLOW_CUSTOM_CODE off and only built-in strategies run. See README "Security".
+keeps ALLOW_CUSTOM_CODE off and only built-in strategies run. See docs/reference.md, "Security".
 
 Protocol (newline-delimited JSON on stdin/stdout):
   parent -> {"code": "..."}             child -> {"ok": true} | {"error": "..."}

@@ -25,7 +25,7 @@ from backtester.serializers import (BacktestRunSerializer, ComparisonCreateSeria
 BENCHMARK_STRATEGY = "Buy and Hold"  # seeded by migration 0019
 
 # Response shapes for the OpenAPI schema (D-072). Nested parts are described loosely (objects/lists) where their exact
-# shape is documented in the README rather than duplicated here.
+# shape is documented in docs/reference.md rather than duplicated here.
 _any_list = serializers.ListField(child=serializers.DictField())
 CATALOG = inline_serializer("Catalog", {
     "version": serializers.IntegerField(), "max_conditions": serializers.IntegerField(), "operators": _any_list,
