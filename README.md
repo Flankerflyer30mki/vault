@@ -13,7 +13,7 @@
 - **Comparisons and optimizations:** a strategies × symbols heatmap with index benchmarks. Parameter searches run on the first 70% of the period, and the best result is tested once on the last 30%.
 - **AI assistant:** describe a strategy in plain English, or Hindi-English, and get rules filled into the form for you to review. Requests it can't express (shorting, options, intraday) are refused, not approximated.
 - **AI research agent:** give it a goal, a symbol and a period. It proposes and backtests candidates, refines them, and picks one. Code, not the agent, then tests that pick on a held-out period, and the report's every number is checked against the results.
-- **Accounts:** guest workspaces, email sign-up and verification, private data for each user, and quotas by tier.
+- **Accounts:** Sign in with Google, guest workspaces, email sign-up and verification, private data for each user, and quotas by tier.
 
 ## Engineering highlights
 
@@ -63,7 +63,7 @@ cd backend && DEBUG=1 DATABASE_URL=sqlite:///:memory: python manage.py test
 cd frontend && npm test
 ```
 
-There are 210 backend and 31 frontend tests. No test reaches Yahoo or the AI provider. CI runs the suite on PostgreSQL 16 and checks for migration drift. It also checks that the OpenAPI schema has no warnings, that production refuses to start without `SECRET_KEY`, and that recorded AI evals still match the prompt. It finishes with `pip-audit`, `npm audit` and both Docker builds.
+There are 223 backend and 34 frontend tests. No test reaches Yahoo, the AI provider or Google. CI runs the suite on PostgreSQL 16 and checks for migration drift. It also checks that the OpenAPI schema has no warnings, that production refuses to start without `SECRET_KEY`, and that recorded AI evals still match the prompt. It finishes with `pip-audit`, `npm audit` and both Docker builds.
 
 ## Documentation
 

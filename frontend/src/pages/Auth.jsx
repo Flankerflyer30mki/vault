@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import api, { errorText } from "../api";
 import { useAuth } from "../auth";
+import GoogleButton from "../GoogleButton";
 
 function GuestButton() {
   const { guest } = useAuth();
@@ -49,6 +50,7 @@ export function Login() {
   return (
     <div className="auth-card">
       <h1>Sign in</h1>
+      <GoogleButton onDone={() => navigate(location.state?.from || "/", { replace: true })} />
       <form onSubmit={submit} className="auth-form">
         <label>
           Email
@@ -98,6 +100,7 @@ export function Signup() {
   return (
     <div className="auth-card">
       <h1>Create an account</h1>
+      <GoogleButton text="signup_with" onDone={() => navigate("/", { replace: true })} />
       <form onSubmit={submit} className="auth-form">
         <label>
           Name (optional)

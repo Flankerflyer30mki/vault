@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { errorText } from "../api";
 import { useAuth } from "../auth";
+import GoogleButton from "../GoogleButton";
 
 // One small form per action. Each POSTs, shows the server's answer, and updates the signed-in user.
 function ActionForm({ title, fields, url, submitLabel, onDone, danger = false, note }) {
@@ -83,22 +84,31 @@ function Account() {
       )}
 
       {user.is_guest ? (
-        <ActionForm
-          title="Save this workspace as an account"
-          note={`Keeps all your strategies and runs. Guest workspaces are deleted on ${new Date(
-            user.guest_expires_at,
-          ).toLocaleDateString()}.`}
-          url="/auth/guest/convert/"
-          submitLabel="Create account"
-          fields={[
-            { name: "email", label: "Email", type: "email", autoComplete: "email" },
-            { name: "password", label: "Password (at least 10 characters)", type: "password", autoComplete: "new-password", minLength: 10 },
-          ]}
-          onDone={(res) => {
-            setUser(res.data.user);
-            return "Account created. Check your email to verify it.";
-          }}
-        />
+        <>
+          <div className="auth-form account-section">
+            <h3>Save with Google</h3>
+            <p className="hint">Keeps all your strategies and runs. Your account is verified straight away.</p>
+            <GoogleButton text="continue_with" />
+          </div>
+          <ActionForm
+            title="Save this workspace as an account"
+            note={`Keeps all your strategies and runs. Guest workspaces are deleted on ${new Date(
+              user.guest_expires_at,
+            ).toLocaleDateString()}.`}
+            url="/auth/guest/convert/"
+            submitLabel="Create account"
+            fields={[
+              { name: "email", label: "Email", type: "email", autoComplete: "email" },
+              { name: "password", label: "Password (at least 10 characters)", type: "password", autoComplete: "new-password", minLength: 10 },
+            ]}
+            onDone={(res) => {
+              setUser(res.data.user);
+              return "Account created. Check your email to verify it.";
+            }}
+          />
+        </>
+      ) : !user.has_password ? (
+        <p className="hint">You sign in with Google, so there&apos;s no password or email to change here.</p>
       ) : (
         <>
           <ActionForm
@@ -129,7 +139,7 @@ function Account() {
         note="Permanently deletes your account and all your strategies, backtests, comparisons and optimizations. This can't be undone."
         url="/auth/delete-account/"
         submitLabel="Delete my account"
-        fields={user.is_guest ? [] : [current]}
+        fields={user.has_password ? [current] : []}
         onDone={() => {
           setUser(null);
           navigate("/login", { replace: true });

@@ -874,3 +874,18 @@ Starting point: `main` was v1, live on Vercel (`vault-lovat-beta.vercel.app`) an
   `docs/reference.md` (its earlier history is in `README.md`), and that file is now the one to keep in sync with behaviour.
   `CLAUDE.md` (local assistant notes) is no longer tracked and is git-ignored; older commits still contain it.
 
+## D-103 · Sign in with Google
+- **Context:** Render's free plan blocks outbound SMTP (ports 25/465/587), so verification and reset emails can't be
+  delivered; they only reach the server log. Users can't verify, so nobody reaches the verified tier.
+- **Decision:** add Google sign-in with Google Identity Services. The browser gets a signed ID token from Google's
+  button and posts it to `POST /api/auth/google/`; `google-auth` verifies signature, audience (our client ID),
+  issuer and expiry, and we require `email_verified`. Sign-in then uses the **same session cookie** as password logins:
+  no JWT sessions, no change to how the API authenticates requests (sessions stay, see the session-vs-JWT discussion).
+  - New user → verified account with no password. A signed-in guest → converted, keeping their data.
+  - Existing verified account → signed in; its password still works.
+  - Existing **unverified** account → verified, its password removed and its sessions signed out. Otherwise someone
+    could register an address they don't own, wait for the owner to sign in with Google, and keep access
+    (account pre-hijacking).
+  - Off without `GOOGLE_CLIENT_ID` (button hidden, endpoint 400), like the AI features.
+- **Alternatives:** an email API over HTTPS (Brevo; still possible later for password users); Supabase Auth or own JWT
+  auth (a rewrite of Phase 1 that doesn't deliver email either).
