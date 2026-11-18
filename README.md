@@ -431,6 +431,10 @@ Flow: push to GitHub, CI runs, and Vercel and Render auto-deploy from `main`. Tu
 
 Rollback: redeploy the previous image from Render's deploy history. Migrations 0009–0011 are not reversible without data loss, so restore from the backup if you need to go back to v1 code.
 
+**The live deployment (since 2026-11-17, D-097):** Vercel `vault-lovat-beta.vercel.app` → Render `vault-api-pqje` (free plan, Docker, `EMBEDDED_WORKER=1`, `RUN_MIGRATIONS=1`) → Render Postgres 16 (free; **expires 2026-12-10**: upgrade it or move the data before then with `pg_dump` / `pg_restore`). Follow-up changes are PRs to `main`; each merge deploys (D-100). Smoke-test **through the Vercel domain**, not only the Render URL: the release's one routing bug only showed there (D-098).
+
+**Market data on Render:** Yahoo refuses requests from Render's IPs (D-099). Symbols must be loaded from a machine Yahoo accepts, using Vault's own fetch code against the production database (`DATABASE_URL` = the database's external URL, `DB_SSLMODE=require`): `load_bars(symbol, date(2005, 1, 3), date.today(), warmup_bars=0)` for each symbol. The 17 suggested symbols and `^GSPC` were loaded on 2026-11-17. Until a fallback provider exists, other symbols fail on production with "No market data", and stored prices don't update by themselves.
+
 ## Runbook
 
 **Render alert "Exited with status 1" (incident 2026-10-15).** The root cause has **not** been established. The email shows only that the process exited. Before you change anything:
@@ -463,6 +467,7 @@ After deploy, watch Logs and Events for the same signature over several hours be
 - *A job looks stuck:* check `status`, `heartbeat_at`, `attempts` and `worker_id` on the run. Recovery runs every 30 s in each worker. It also queues the out-of-sample run for any optimization whose in-sample runs have all finished. If no worker is running, jobs stay `queued`.
 - *Queue full (503):* there are more than `MAX_ACTIVE_RUNS` active runs. Add a worker or raise the limit.
 - *Database down:* `/health/ready` returns 503. API calls return a safe 500 or 503 without a stack trace. Workers log the error and keep polling. They drop broken connections at the top of each loop, so they reconnect once the database is back.
+- *"No market data" on production for a valid ticker:* Yahoo blocks Render; load the symbol from another machine (see Deploy, "Market data on Render").
 - *Yahoo down:* runs over data that is already stored still work. Runs that need new data fail with category `data` and the message "No market data".
 
 ## Design decisions

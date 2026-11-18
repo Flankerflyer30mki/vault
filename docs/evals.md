@@ -752,3 +752,59 @@ Run by the user on the local stack: AAPL, 2015-01-01 to 2023-06-21 (research to 
 **The honest part worked as designed:** the strategy that looked best in research lost to buy & hold on the years it
 hadn't seen, and the report led with that. After the fixes: backend 209/209 (Postgres), 208 + 1 skipped (SQLite);
 frontend 31/31. A second live run, to confirm the fixes, needs the next day's free tokens.
+
+---
+
+# Phase 6 · Release
+
+## Phase 6 · Backup and migration rehearsal on production data
+`pg_dump` (client 17, server PostgreSQL 16.15, custom format): 251 KB, 13 tables with data. Restored into a throwaway
+Postgres 16 and migrated with the v2 image:
+
+| | v1 (production) | After v2 migrations |
+|---|---|---|
+| Migration state | backtester `0011`; no `accounts`, `assist`, `sessions` | all applied; `migrate --check` clean |
+| Time | — | **4.9 s** |
+| Backtests | 24 | **24** (all completed, owned by the hidden legacy user) |
+| Optimizations | 2 | **2** experiments |
+| Trades / bars | 995 / 1,288 | **995 / 1,288** |
+| Strategies | 3 built-in | 11 built-in (3 + 6 templates + Buy and Hold + the hidden research placeholder) |
+
+`check --deploy` with production settings: 2 warnings, both expected (HSTS off until HTTPS is confirmed; HTTPS redirect
+done by Render and Vercel).
+
+## Phase 6 · Deploy timeline (UTC, 2026-11-17)
+| Time | Event |
+|---|---|
+| 18:04:31 | `release/v2` merged into `main` (PR #10, CI green) |
+| 18:05:42 | Render serving v2 (`/api/auth/csrf/` 200) |
+| ~18:06 | Smoke test: API healthy, but `/api/...` through Vercel returned the SPA's HTML |
+| ~18:08 | Cause found: `/api/:path*` doesn't match trailing-slash URLs |
+| 18:11:10 | Hotfix merged (PR #11) |
+| 18:11:25 | API reachable through the Vercel domain |
+| ~18:14 | First live backtest on an unstored symbol failed: Yahoo blocks Render |
+| ~00:00 (11-18) | 18 symbols pre-loaded; the same backtest completes |
+
+## Phase 6 · Production smoke test (through `vault-lovat-beta.vercel.app`)
+| Check | Result |
+|---|---|
+| `/health/ready` | ✅ `{"status": "ok"}` |
+| API docs, `/metrics` (no token set) | ✅ 404, 404 |
+| `X-Request-ID` on responses | ✅ |
+| Title, icon, SPA deep link (`/research`) | ✅ "Vault", SVG icon, 200 |
+| CSRF cookie → guest sign-up | ✅ 200 → 201, tier `guest` |
+| Catalog `ai_enabled` | ✅ true |
+| Built-in strategies; hidden placeholder not listed | ✅ 10 listed, placeholder absent |
+| Logged-out API call | ✅ 403 |
+| Backtest on stored data (AAPL, Buy and Hold) | ✅ completed, 1,988 ms (worker embedded in the web service) |
+| Backtest on an unstored symbol (MSFT) | ❌ "No market data" (Yahoo blocks Render) → ✅ after pre-load: completed, **26 ms**, $10,000 → $11,490.63 (buy & hold +13.6%) |
+
+Pre-load: 18 symbols, 4,701–5,504 bars each (~95,000 total), ~8 s per symbol from a residential connection. Warnings
+were data-quality notes: an NSE holiday gap (2014-10-01 → 10-07) and one invalid row rejected per Indian stock.
+
+## Phase 6 · Bugs found in production
+| What | Found by | Outcome |
+|---|---|---|
+| **Vercel rewrite didn't match trailing-slash URLs**: the live site couldn't reach its API | Smoke test through the Vercel domain | Regex source (D-098); a lesson: the deploy's routing had no test, and local dev uses a different proxy |
+| **Yahoo refuses Render's IPs** | First backtest on an unstored symbol | Pre-load (D-099); fallback provider next |
+| Test-script mistake: run creation without `starting_cash` | The API's 400 response | Not a bug; the form always sends it |

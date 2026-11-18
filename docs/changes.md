@@ -295,3 +295,31 @@ New **Research** page (`/research`: goal form, list of runs) and `/research/<id>
 - `providers.get_provider(max_tokens, reasoning_effort)`; files: `assist/agent.py`, `research.py`, `providers.py`,
   `serializers.py`, `test_research.py` (+4); `vault_core/settings.py`; `frontend/src/pages/ResearchDetail.jsx` (+ test),
   `App.css`; docs.
+
+---
+
+## Phase 6 · Release · `main` · 2026-11-17/18
+
+### What shipped
+v2 (Phases 0–5) merged into `main` (PR #10, `2552517`) and deployed: frontend on Vercel (`vault-lovat-beta.vercel.app`),
+API with an embedded worker on Render (`vault-api-pqje.onrender.com`, free plan, Docker), database upgraded in place.
+
+### Changes
+| Change | PR | Decision |
+|---|---|---|
+| `vercel.json` rewrites `/api/*` to the Render API; tab title "Vault" and a Vault icon (was "frontend" and Vite's) | #9 | D-029, D-097 |
+| Hotfix: the rewrite's source is a regex so `/api/.../` (trailing slash) matches | #11 | D-098 |
+| Production data: 17 suggested symbols + `^GSPC` pre-loaded (2005 → 2026-11-16) from a residential connection | — (ops) | D-099 |
+
+### Configuration applied (Render `vault-api`)
+Added `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` (the Vercel domain), `SECURE_PROXY_SSL_HEADER=1`,
+`DB_SSLMODE=require`, `RUN_MIGRATIONS=1`, `EMBEDDED_WORKER=1`, `AI_PROVIDER=groq`, `GROQ_API_KEY`; removed
+`CORS_ALLOWED_ORIGINS`; kept `SECRET_KEY`, `DATABASE_URL`; health check `/health/ready`. Vercel: removed `VITE_API_URL`.
+
+### Database
+v1 at backtester `0011` (no accounts) → v2 at `0023` + `accounts`, `assist`, `sessions` on deploy, as rehearsed. Backup:
+`pg_dump` custom format taken before the release (kept outside the repo).
+
+### Not done yet
+Email provider, `METRICS_TOKEN`, Sentry, HSTS; `NUM_PROXIES` check behind Vercel + Render; a fallback data source;
+CSS/UX fixes; the free database expires 2026-12-10.
