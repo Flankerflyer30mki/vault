@@ -478,3 +478,22 @@ class LegacyMigrationTests(TransactionTestCase):
 
     def test_fresh_database_gets_no_legacy_user(self):
         self.assertFalse(User.objects.filter(email=LEGACY_EMAIL).exists())
+
+
+class PlainTextConsoleBackendTests(TestCase):
+    """With no SMTP server, emails go to the log; the link there must work when copied (no quoted-printable)."""
+
+    def test_long_link_printed_on_one_line_without_encoding(self):
+        import io
+
+        from accounts.mail_backends import PlainTextConsoleBackend
+
+        link = "https://vault.example/verify-email?uid=OA&token=di8h2u-" + "0123456789abcdef" * 2
+        stream = io.StringIO()
+        with PlainTextConsoleBackend(stream=stream) as backend:
+            backend.send_messages([mail.EmailMessage("Verify your Vault email", f"Confirm:\n\n{link}\n",
+                                                     "Vault <x@example.com>", ["a@example.com"])])
+        out = stream.getvalue()
+        self.assertIn(link + "\n", out)
+        self.assertNotIn("=3D", out)
+        self.assertIn("Subject: Verify your Vault email", out)
