@@ -9,3 +9,6 @@ backend/db.sqlite3
 frontend/node_modules/
 frontend/dist/
 frontend/build/
+
+# Local assistant notes (kept on disk, not published)
+CLAUDE.md
