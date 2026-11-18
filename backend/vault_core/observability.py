@@ -135,10 +135,15 @@ class RequestContextMiddleware:
             response["X-Request-ID"] = rid
             if route not in QUIET_ROUTES:
                 user = getattr(request, "user", None)
+                xff = request.headers.get("X-Forwarded-For", "")
                 access_log.info("http_request", extra={
                     "method": request.method, "route": route, "status": response.status_code,
                     "duration_ms": round(seconds * 1000, 1),
-                    "user_id": user.pk if user is not None and user.is_authenticated else None})
+                    "user_id": user.pk if user is not None and user.is_authenticated else None,
+                    # How many proxies the request passed (never the addresses): what NUM_PROXIES must match for
+                    # per-IP rate limits to see the client, not a proxy.
+                    "xff_hops": len([p for p in xff.split(",") if p.strip()]),
+                    "via_vercel": "X-Vercel-Forwarded-For" in request.headers or "X-Vercel-Id" in request.headers})
             return response
         finally:
             request_id_var.reset(token)
