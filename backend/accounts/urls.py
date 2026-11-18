@@ -10,6 +10,7 @@ urlpatterns = [
     path("logout/", views.LogoutView.as_view()),
     path("guest/", views.GuestView.as_view()),
     path("guest/convert/", views.ConvertGuestView.as_view()),
+    path("google/", views.GoogleSignInView.as_view()),
     path("verify-email/", views.VerifyEmailView.as_view()),
     path("verify-email/resend/", views.ResendVerificationView.as_view()),
     path("password-reset/", views.PasswordResetView.as_view()),

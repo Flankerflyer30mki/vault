@@ -11,11 +11,15 @@ class UserSerializer(serializers.ModelSerializer):
     email = serializers.SerializerMethodField()
     tier = serializers.CharField(read_only=True)
     guest_expires_at = serializers.SerializerMethodField()
+    has_password = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ["id", "email", "display_name", "tier", "email_verified", "is_guest", "date_joined",
-                  "guest_expires_at"]
+                  "guest_expires_at", "has_password"]
+
+    def get_has_password(self, user) -> bool:
+        return user.has_usable_password()  # False for guests and Google-only accounts
 
     def get_email(self, user) -> str | None:
         return None if user.is_guest else user.email  # guests have a synthetic address; don't show it
@@ -52,6 +56,10 @@ class NewCredentialsSerializer(serializers.Serializer):
         except Exception as e:  # django.core.exceptions.ValidationError
             raise serializers.ValidationError({"password": list(getattr(e, "messages", [str(e)]))})
         return data
+
+
+class GoogleCredentialSerializer(serializers.Serializer):
+    credential = serializers.CharField(max_length=4096)  # a Google ID token (a JWT, ~1 KB)
 
 
 class LoginSerializer(serializers.Serializer):
