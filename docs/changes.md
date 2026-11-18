@@ -315,7 +315,7 @@ API with an embedded worker on Render (`vault-api-pqje.onrender.com`, free plan,
 | `NUM_PROXIES=4` set on Render from the measured hop count | — (config) | D-101 |
 | README rewritten as an overview; the full spec moved to `docs/reference.md`; `CLAUDE.md` untracked | #14 | D-102 |
 | Emails logged without SMTP are plain text: links were quoted-printable (`=3D`, split lines) and failed when copied | #15 | — |
-| Sign in with Google (`POST /api/auth/google/`, button on sign-in, sign-up and the guest Account page); `has_password` on the user; `google_client_id` on `/api/auth/me/` | #16 | D-103 |
+| Sign in with Google (`POST /api/auth/google/`, button on sign-in, sign-up and the guest Account page); `has_password` on the user; `google_client_id` on `/api/auth/me/`; a `/privacy` page (required by Google's consent screen) and a footer | #16 | D-103 |
 
 ### Configuration applied (Render `vault-api`)
 Added `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` (the Vercel domain), `SECURE_PROXY_SSL_HEADER=1`,
