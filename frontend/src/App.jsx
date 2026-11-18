@@ -6,6 +6,7 @@ import ComparisonTrigger from "./pages/ComparisonTrigger";
 import Dashboard from "./pages/Dashboard";
 import ExperimentDetail from "./pages/ExperimentDetail";
 import OptimizationTrigger from "./pages/OptimizationTrigger";
+import Privacy from "./pages/Privacy";
 import Research from "./pages/Research";
 import ResearchDetail from "./pages/ResearchDetail";
 import RunDetail from "./pages/RunDetail";
@@ -84,6 +85,7 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route path="/" element={page(<Dashboard />)} />
             <Route path="/account" element={page(<Account />)} />
             <Route path="/strategies" element={page(<StrategyList />)} />
@@ -99,6 +101,12 @@ function App() {
             <Route path="/research/:id" element={page(<ResearchDetail />)} />
           </Routes>
         </div>
+        <footer className="site-footer">
+          <Link to="/privacy">Privacy</Link> ·{" "}
+          <a href="https://github.com/Flankerflyer30mki/vault" target="_blank" rel="noreferrer">
+            Source
+          </a>
+        </footer>
       </AuthProvider>
     </BrowserRouter>
   );

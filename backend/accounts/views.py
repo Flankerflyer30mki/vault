@@ -7,8 +7,12 @@ Security notes:
   which signs out every other session; update_session_auth_hash keeps only the current one signed in.
 - Password reset always answers the same way, whether or not the email exists (no account enumeration).
 - Login, signup and reset share the 'auth' throttle (per IP); guest creation has its own 'guest' throttle.
+- Sign in with Google (D-103): Google's signed ID token proves the email, so the account is verified. Linking to an
+  existing *unverified* account drops its password and sessions: whoever set them never proved they own the address.
 """
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
+from django.db import IntegrityError, transaction
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -20,17 +24,19 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from accounts import emails
+from accounts import emails, google
 from accounts.models import User
 from accounts.serializers import (DeleteAccountSerializer, EmailChangeSerializer, EmailSerializer, LoginSerializer,
-                                  NewCredentialsSerializer, PasswordChangeSerializer, SetPasswordSerializer,
-                                  TokenSerializer, UserSerializer, check_new_password)
+                                  GoogleCredentialSerializer, NewCredentialsSerializer, PasswordChangeSerializer,
+                                  SetPasswordSerializer, TokenSerializer, UserSerializer, check_new_password)
 from accounts.tokens import decode_uid, email_verification_token, password_reset_token
 
 INVALID_LINK = "This link is invalid or has expired."
 
 # Response shapes for the OpenAPI schema (D-072).
 USER = inline_serializer("UserEnvelope", {"user": UserSerializer(allow_null=True)})
+ME = inline_serializer("MeEnvelope", {"user": UserSerializer(allow_null=True),
+                                      "google_client_id": serializers.CharField()})
 DETAIL = inline_serializer("Detail", {"detail": serializers.CharField()})
 
 
@@ -65,7 +71,9 @@ def _user_from_token(data, generator):
 
 
 def _require_password(user, password):
-    if not user.has_usable_password() or not user.check_password(password):
+    if not user.has_usable_password():
+        raise ValidationError({"current_password": ["This account has no password: it signs in with Google."]})
+    if not user.check_password(password):
         raise ValidationError({"current_password": ["Incorrect password."]})
 
 
@@ -83,10 +91,11 @@ class CsrfView(APIView):
 class MeView(APIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(responses=USER)
+    @extend_schema(responses=ME)
     def get(self, request):
         user = request.user if request.user.is_authenticated else None
-        return Response({"user": UserSerializer(user).data if user else None})
+        return Response({"user": UserSerializer(user).data if user else None,
+                         "google_client_id": settings.GOOGLE_CLIENT_ID})
 
 
 class SignupView(AuthView):
@@ -154,6 +163,54 @@ class ConvertGuestView(SignedInView):
         update_session_auth_hash(request, user)
         emails.send_verification(user)
         return _user(user)
+
+
+class GoogleSignInView(AuthView):
+    """Sign in or sign up with a Google ID token. A signed-in guest keeps their data (like ConvertGuestView)."""
+
+    @extend_schema(request=GoogleCredentialSerializer, responses={200: USER, 201: USER})
+    def post(self, request):
+        if not google.enabled():
+            raise ValidationError({"detail": "Sign in with Google isn't enabled."})
+        current = request.user if request.user.is_authenticated else None
+        if current is not None and not current.is_guest:
+            raise ValidationError({"detail": "Already signed in."})
+        s = GoogleCredentialSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            info = google.verify(s.validated_data["credential"])
+        except google.GoogleTokenError as e:
+            raise ValidationError({"detail": str(e)}) from None
+        try:
+            with transaction.atomic():
+                user, code = self._account_for(current, info)
+        except IntegrityError:  # the same email created concurrently
+            raise ValidationError({"detail": "Please try again."}) from None
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        return _user(user, code)
+
+    @staticmethod
+    def _account_for(current, info):
+        email = info["email"]
+        existing = User.objects.select_for_update().filter(email=email).first()
+        if existing is not None:
+            if current is not None:
+                raise ValidationError({"detail": "An account with this email already exists. Sign out of the guest "
+                                                 "workspace, then sign in with Google."})
+            if existing.is_system or not existing.is_active or existing.is_guest:
+                raise ValidationError({"detail": "This account can't sign in."})
+            if not existing.email_verified:
+                existing.email_verified = True
+                existing.set_unusable_password()  # also signs out every existing session
+                existing.save(update_fields=["email_verified", "password"])
+            return existing, status.HTTP_200_OK
+        if current is not None:  # guest -> account, keeping their strategies and runs
+            current.email, current.display_name = email, info["name"]
+            current.is_guest, current.email_verified = False, True
+            current.set_unusable_password()
+            current.save()
+            return current, status.HTTP_200_OK
+        return User.objects.create_user(email, display_name=info["name"], email_verified=True), status.HTTP_201_CREATED
 
 
 class VerifyEmailView(AuthView):
@@ -239,7 +296,7 @@ class DeleteAccountView(SignedInView):
         s = DeleteAccountSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         user = request.user
-        if not user.is_guest:
+        if user.has_usable_password():  # guests and Google-only accounts have none
             _require_password(user, s.validated_data["current_password"])
         logout(request)
         user.delete()  # cascades to strategies, runs, trades and experiments

@@ -88,6 +88,9 @@ EMAIL_USE_TLS = env("EMAIL_USE_TLS", "1") == "1"
 EMAIL_TIMEOUT = 10
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "Vault <no-reply@localhost>")
 
+# --- "Sign in with Google" (D-103): on only when a Google OAuth web client ID is set. The ID is public, not a secret.
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", "")
+
 ROOT_URLCONF = "vault_core.urls"
 WSGI_APPLICATION = "vault_core.wsgi.application"
 
