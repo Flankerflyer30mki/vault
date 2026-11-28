@@ -47,6 +47,16 @@ export function Tabs({ tabs, label }) {
   );
 }
 
+// A titled group of fields inside a form card; `grid` lays its fields out two per row on wide screens.
+export function FormSection({ title, grid = false, children }) {
+  return (
+    <section className="form-section">
+      <h2 className="form-section-title">{title}</h2>
+      <div className={grid ? "field-grid" : "field-stack"}>{children}</div>
+    </section>
+  );
+}
+
 export function PageHeader({ title, subtitle, children }) {
   return (
     <header className="page-header">
@@ -110,8 +120,9 @@ const STATUS = {
   waiting: ["Waiting", "neutral"],
 };
 
-export function StatusBadge({ status }) {
-  const [label, tone] = STATUS[status] || [String(status).replace(/_/g, " "), "neutral"];
+export function StatusBadge({ status, label: override }) {
+  const [fallback, tone] = STATUS[status] || [String(status).replace(/_/g, " "), "neutral"];
+  const label = override || fallback;
   return (
     <span className={`status status-${tone}`}>
       <span className="status-dot" aria-hidden="true" />

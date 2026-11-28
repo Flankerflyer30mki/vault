@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api, { errorText, list } from "../api";
-import { CostModelFields, SymbolInput } from "../components";
+import { CostModelFields, FormSection, PageHeader, SymbolInput } from "../components";
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -73,55 +73,76 @@ function RunTrigger() {
       .finally(() => setSubmitting(false));
   };
 
+  // One number field from NUMERIC, by name.
+  const numberField = (field) => {
+    const [, label, step, min, max] = NUMERIC.find(([f]) => f === field);
+    return (
+      <label key={field}>
+        {label}
+        <input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          value={form[field]}
+          placeholder={["stop_loss_pct", "take_profit_pct"].includes(field) ? "none" : undefined}
+          required={!["stop_loss_pct", "take_profit_pct"].includes(field)}
+          onChange={(e) => set(field, e.target.value)}
+        />
+      </label>
+    );
+  };
+
   return (
     <div>
-      <h1>New Backtest</h1>
-      <form onSubmit={handleSubmit} className="run-form">
-        <label>
-          Strategy
-          <select value={form.strategy} onChange={(e) => set("strategy", e.target.value)} required>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-                {s.is_builtin ? " (built-in)" : ""}
-                {s.kind === "builder" ? " · builder" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <SymbolInput value={form.symbol} onChange={(v) => set("symbol", v)} suggestions={catalog?.suggested_symbols} />
-        <CostModelFields
-          catalog={catalog}
-          costModel={form.cost_model}
-          commission={form.commission_pct}
-          onChange={patch}
-        />
-        <label>
-          Start Date
-          <input type="date" value={form.start_date} max={today} onChange={(e) => set("start_date", e.target.value)} required />
-        </label>
-        <label>
-          End Date
-          <input type="date" value={form.end_date} max={today} onChange={(e) => set("end_date", e.target.value)} required />
-        </label>
-        {NUMERIC.map(([field, label, step, min, max]) => (
-          <label key={field}>
-            {label}
-            <input
-              type="number"
-              step={step}
-              min={min}
-              max={max}
-              value={form[field]}
-              required={!["stop_loss_pct", "take_profit_pct"].includes(field)}
-              onChange={(e) => set(field, e.target.value)}
-            />
+      <PageHeader title="New backtest" subtitle="Run one strategy on one symbol. Signals use each day's close; orders fill at the next open." />
+      <form onSubmit={handleSubmit} className="run-form form-card">
+        <FormSection title="Strategy and market">
+          <label>
+            Strategy
+            <select value={form.strategy} onChange={(e) => set("strategy", e.target.value)} required>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.is_builtin ? " (built-in)" : ""}
+                  {s.kind === "builder" ? " · builder" : ""}
+                </option>
+              ))}
+            </select>
           </label>
-        ))}
+          <SymbolInput value={form.symbol} onChange={(v) => set("symbol", v)} suggestions={catalog?.suggested_symbols} />
+        </FormSection>
+        <FormSection title="Period" grid>
+          <label>
+            Start date
+            <input type="date" value={form.start_date} max={today} onChange={(e) => set("start_date", e.target.value)} required />
+          </label>
+          <label>
+            End date
+            <input type="date" value={form.end_date} max={today} onChange={(e) => set("end_date", e.target.value)} required />
+          </label>
+        </FormSection>
+        <FormSection title="Money and costs" grid>
+          {numberField("starting_cash")}
+          {numberField("max_position_pct")}
+          <CostModelFields
+            catalog={catalog}
+            costModel={form.cost_model}
+            commission={form.commission_pct}
+            onChange={patch}
+          />
+          {numberField("slippage_pct")}
+        </FormSection>
+        <FormSection title="Risk (optional)" grid>
+          {numberField("stop_loss_pct")}
+          {numberField("take_profit_pct")}
+        </FormSection>
         {error && <p className="error pre">{error}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Queueing…" : "Run Backtest"}
-        </button>
+        <div className="form-footer">
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Queueing…" : "Run backtest"}
+          </button>
+        </div>
       </form>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { errorText, list } from "../api";
-import { CostModelFields, SymbolInput } from "../components";
+import { CostModelFields, FormSection, PageHeader, SymbolInput } from "../components";
 import { parseNumberList, product } from "../experiments";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -93,93 +93,100 @@ function OptimizationTrigger() {
 
   return (
     <div>
-      <h1>Optimize a strategy</h1>
-      <p className="hint">
-        Every combination runs on the first 70% of the period (in-sample). The best by Sharpe then runs once on the
-        untouched last 30% (out-of-sample). Judge it by the out-of-sample result, not the in-sample ranking.
-      </p>
+      <PageHeader
+        title="Optimize a strategy"
+        subtitle="Every combination runs on the first 70% of the period (in-sample). The best by Sharpe then runs once on the untouched last 30% (out-of-sample). Judge it by the out-of-sample result, not the in-sample ranking."
+      />
 
-      <form onSubmit={handleSubmit} className="run-form wide-form">
-        <label>
-          Strategy
-          <select value={form.strategy} onChange={(e) => pickStrategy(e.target.value)} required>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-                {s.is_builtin ? " (built-in)" : ""}
-                {s.kind === "builder" ? " · builder" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+      <form onSubmit={handleSubmit} className="run-form wide-form form-card">
+        <FormSection title="Strategy and market">
+          <label>
+            Strategy
+            <select value={form.strategy} onChange={(e) => pickStrategy(e.target.value)} required>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.is_builtin ? " (built-in)" : ""}
+                  {s.kind === "builder" ? " · builder" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        {tunable.length > 0 ? (
-          <fieldset className="pick-list">
-            <legend>Strategy parameters to search</legend>
-            <p className="hint">
-              A parameter used in several rules (for example the same EMA in the buy and sell rules) changes everywhere
-              together.
-            </p>
-            {tunable.map((g) => (
-              <div key={g.label} className="param-row">
-                <label className="check">
-                  <input type="checkbox" checked={g.label in paramText} onChange={() => toggleParam(g)} />
-                  {g.label} <span className="hint">(now {g.value}, {g.min}–{g.max})</span>
-                </label>
-                {g.label in paramText && (
-                  <input
-                    type="text"
-                    aria-label={`${g.label} values`}
-                    value={paramText[g.label]}
-                    onChange={(e) => setParamText({ ...paramText, [g.label]: e.target.value })}
-                  />
-                )}
-              </div>
-            ))}
-          </fieldset>
-        ) : (
-          strategy && <p className="hint">Code strategies search stop-loss and take-profit only.</p>
-        )}
+          {tunable.length > 0 ? (
+            <fieldset className="pick-list">
+              <legend>Strategy parameters to search</legend>
+              <p className="hint">
+                A parameter used in several rules (for example the same EMA in the buy and sell rules) changes everywhere
+                together.
+              </p>
+              {tunable.map((g) => (
+                <div key={g.label} className="param-row">
+                  <label className="check">
+                    <input type="checkbox" checked={g.label in paramText} onChange={() => toggleParam(g)} />
+                    {g.label} <span className="hint">(now {g.value}, {g.min}–{g.max})</span>
+                  </label>
+                  {g.label in paramText && (
+                    <input
+                      type="text"
+                      aria-label={`${g.label} values`}
+                      value={paramText[g.label]}
+                      onChange={(e) => setParamText({ ...paramText, [g.label]: e.target.value })}
+                    />
+                  )}
+                </div>
+              ))}
+            </fieldset>
+          ) : (
+            strategy && <p className="hint">Code strategies search stop-loss and take-profit only.</p>
+          )}
 
-        <SymbolInput value={form.symbol} onChange={(v) => set("symbol", v)} suggestions={catalog?.suggested_symbols} />
-        <CostModelFields
-          catalog={catalog}
-          costModel={form.cost_model}
-          showCommission={false}
-          onChange={({ cost_model }) => set("cost_model", cost_model)}
-        />
-        <p className="hint">
-          {form.cost_model === "india_delivery"
-            ? "Each run uses zero brokerage plus India's statutory charges."
-            : "Each run uses a 0.1% commission per fill."}
-        </p>
-        <label>
-          Start Date
-          <input type="date" value={form.start_date} max={today} onChange={(e) => set("start_date", e.target.value)} required />
-        </label>
-        <label>
-          End Date
-          <input type="date" value={form.end_date} max={today} onChange={(e) => set("end_date", e.target.value)} required />
-        </label>
-        <label>
-          Starting cash (in the symbol&apos;s currency)
-          <input type="number" min={100} max={10000000} value={form.starting_cash} onChange={(e) => set("starting_cash", e.target.value)} required />
-        </label>
-        <label>
-          Stop Loss Options (comma-separated fractions, e.g. 0.05, 0.08)
-          <input type="text" value={stopLossText} aria-invalid={!!sl.error} onChange={(e) => setStopLossText(e.target.value)} />
-        </label>
-        <label>
-          Take Profit Options (comma-separated fractions, e.g. 0.10, 0.15)
-          <input type="text" value={takeProfitText} aria-invalid={!!tp.error} onChange={(e) => setTakeProfitText(e.target.value)} />
-        </label>
-        <p className={inputError ? "error" : "hint"} aria-live="polite">
-          {inputError || `${grid} in-sample backtests + 1 out-of-sample run.`}
-        </p>
+          <SymbolInput value={form.symbol} onChange={(v) => set("symbol", v)} suggestions={catalog?.suggested_symbols} />
+          <CostModelFields
+            catalog={catalog}
+            costModel={form.cost_model}
+            showCommission={false}
+            onChange={({ cost_model }) => set("cost_model", cost_model)}
+          />
+          <p className="hint">
+            {form.cost_model === "india_delivery"
+              ? "Each run uses zero brokerage plus India's statutory charges."
+              : "Each run uses a 0.1% commission per fill."}
+          </p>
+        </FormSection>
+        <FormSection title="Period and money" grid>
+          <label>
+            Start date
+            <input type="date" value={form.start_date} max={today} onChange={(e) => set("start_date", e.target.value)} required />
+          </label>
+          <label>
+            End date
+            <input type="date" value={form.end_date} max={today} onChange={(e) => set("end_date", e.target.value)} required />
+          </label>
+          <label>
+            Starting cash (in the symbol&apos;s currency)
+            <input type="number" min={100} max={10000000} value={form.starting_cash} onChange={(e) => set("starting_cash", e.target.value)} required />
+          </label>
+        </FormSection>
+        <FormSection title="Risk settings to search" grid>
+          <label>
+            Stop-loss options (comma-separated fractions, e.g. 0.05, 0.08)
+            <input type="text" value={stopLossText} aria-invalid={!!sl.error} onChange={(e) => setStopLossText(e.target.value)} />
+          </label>
+          <label>
+            Take-profit options (comma-separated fractions, e.g. 0.10, 0.15)
+            <input type="text" value={takeProfitText} aria-invalid={!!tp.error} onChange={(e) => setTakeProfitText(e.target.value)} />
+          </label>
+        </FormSection>
         {error && error !== inputError && <p className="error pre">{error}</p>}
-        <button type="submit" disabled={submitting || !!inputError}>
-          {submitting ? "Queueing…" : "Run optimization"}
-        </button>
+        <div className="form-footer">
+          <button type="submit" disabled={submitting || !!inputError}>
+            {submitting ? "Queueing…" : "Run optimization"}
+          </button>
+          <p className={inputError ? "error" : "hint"} aria-live="polite">
+            {inputError || `${grid} in-sample backtests + 1 out-of-sample run.`}
+          </p>
+        </div>
       </form>
     </div>
   );

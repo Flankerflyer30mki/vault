@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { money, num, pct, usePoll } from "../api";
 import { ChartTooltip, axisProps, compact, useChartTheme } from "../charts";
-import { Disclaimer, PageSkeleton } from "../components";
+import { Disclaimer, PageHeader, PageSkeleton, StatusBadge } from "../components";
 import { METRICS, buildMatrix, heatLevel, mergeCurves, metricValue, paramLabel } from "../experiments";
 
 const SERIES_SHOWN = 9; // distinct series colours available (--series-1..9)
@@ -283,14 +283,18 @@ function ExperimentDetail() {
 
   return (
     <div>
-      <h1>
-        {comparison ? "Comparison" : "Optimization"} #{job.id}
-        {!comparison && ` — ${job.strategy_name}`}
-      </h1>
-      <p>
-        {comparison ? (job.config?.symbols || []).join(", ") : job.symbol} | {job.start_date} to {job.end_date} | Status:{" "}
-        {job.status.replace("_", " ")} ({finished}/{children.length} {comparison ? "cells" : "in-sample runs"} finished)
-      </p>
+      <PageHeader
+        title={`${comparison ? "Comparison" : "Optimization"} #${job.id}${comparison ? "" : ` — ${job.strategy_name}`}`}
+        subtitle={
+          <>
+            <span className="mono">{comparison ? (job.config?.symbols || []).join(", ") : job.symbol}</span> ·{" "}
+            {job.start_date} → {job.end_date} · {finished}/{children.length}{" "}
+            {comparison ? "cells" : "in-sample runs"} finished
+          </>
+        }
+      >
+        <StatusBadge status={job.status} />
+      </PageHeader>
       {error && <p className="error">Live updates paused: {error}</p>}
       {comparison ? <ComparisonView job={job} /> : <OptimizationView job={job} />}
       <Disclaimer />

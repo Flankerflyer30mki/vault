@@ -57,6 +57,16 @@ function renderAt(path) {
 }
 
 describe("ComparisonTrigger", () => {
+  // Regression (D-104): step 0.01 counted from min 0.001 made the label's own examples invalid, so the browser
+  // refused to submit.
+  it("accepts the stop-loss and take-profit examples from the labels", async () => {
+    const user = renderAt("/compare");
+    await screen.findByLabelText("EMA Crossover");
+    await user.type(screen.getByLabelText(/stop loss/i), "0.08");
+    await user.type(screen.getByLabelText(/take profit/i), "0.15");
+    expect(screen.getByRole("button", { name: "Run comparison" }).closest("form").checkValidity()).toBe(true);
+  });
+
   it("counts cells, enforces the limit and posts the matrix", async () => {
     const user = renderAt("/compare");
     await user.click(await screen.findByLabelText("EMA Crossover"));

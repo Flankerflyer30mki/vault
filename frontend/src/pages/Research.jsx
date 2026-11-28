@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api, { errorText, list } from "../api";
-import { PageSkeleton, SymbolInput } from "../components";
+import { FormSection, PageHeader, PageSkeleton, StatusBadge, SymbolInput } from "../components";
 import { OBJECTIVES, STATUS_LABEL } from "../research";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -48,88 +48,94 @@ function Research() {
 
   return (
     <div className="research">
-      <h1>AI research</h1>
-      <p className="hint">
-        Describe what you&apos;re looking for. The agent proposes strategies, backtests and refines them on the first
-        70% of the period. Then Vault tests its pick <strong>once</strong> on the last 30%, which the agent never sees,
-        and reports that result next to buy &amp; hold. You decide what to save.
-      </p>
-      <form onSubmit={submit} className="research-form">
-        <label>
-          Goal
-          <textarea
-            rows={3}
-            maxLength={1000}
-            required
-            value={form.goal}
-            placeholder="e.g. A trend-following strategy that beats buy and hold with a smaller drawdown."
-            onChange={(e) => set({ goal: e.target.value })}
-          />
-        </label>
-        <SymbolInput value={form.symbol} onChange={(symbol) => set({ symbol })} suggestions={catalog.suggested_symbols || []} />
-        <div className="row">
+      <PageHeader
+        title="AI research"
+        subtitle="Describe what you're looking for. The agent proposes strategies, backtests and refines them on the first 70% of the period. Then Vault tests its pick once on the last 30%, which the agent never sees, and reports that result next to buy & hold. You decide what to save."
+      />
+      <form onSubmit={submit} className="research-form form-card">
+        <FormSection title="What to look for">
           <label>
-            Start
-            <input type="date" value={form.start_date} onChange={(e) => set({ start_date: e.target.value })} required />
-          </label>
-          <label>
-            End
-            <input type="date" value={form.end_date} max={today} onChange={(e) => set({ end_date: e.target.value })} required />
-          </label>
-          <label>
-            Optimise for
-            <select value={form.objective} onChange={(e) => set({ objective: e.target.value })}>
-              {Object.entries(OBJECTIVES).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Max drawdown % (optional)
-            <input
-              type="number"
-              min="1"
-              max="100"
-              step="any"
-              value={form.max_drawdown_pct}
-              onChange={(e) => set({ max_drawdown_pct: e.target.value })}
+            Goal
+            <textarea
+              rows={3}
+              maxLength={1000}
+              required
+              value={form.goal}
+              placeholder="e.g. A trend-following strategy that beats buy and hold with a smaller drawdown."
+              onChange={(e) => set({ goal: e.target.value })}
             />
           </label>
-        </div>
+          <SymbolInput value={form.symbol} onChange={(symbol) => set({ symbol })} suggestions={catalog.suggested_symbols || []} />
+        </FormSection>
+        <FormSection title="Period and objective" grid>
+            <label>
+              Start
+              <input type="date" value={form.start_date} onChange={(e) => set({ start_date: e.target.value })} required />
+            </label>
+            <label>
+              End
+              <input type="date" value={form.end_date} max={today} onChange={(e) => set({ end_date: e.target.value })} required />
+            </label>
+            <label>
+              Optimise for
+              <select value={form.objective} onChange={(e) => set({ objective: e.target.value })}>
+                {Object.entries(OBJECTIVES).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Max drawdown % (optional)
+              <input
+                type="number"
+                min="1"
+                max="100"
+                step="any"
+                value={form.max_drawdown_pct}
+                onChange={(e) => set({ max_drawdown_pct: e.target.value })}
+              />
+            </label>
+        </FormSection>
         {error && <p className="error pre">{error}</p>}
-        <button type="submit" disabled={submitting || form.goal.trim().length < 10}>
-          {submitting ? "Starting…" : "Start research"}
-        </button>
-        <p className="hint">Your goal is sent to an AI service (Groq). A run uses at most 8 decisions and 40 backtests.</p>
+        <div className="form-footer">
+          <button type="submit" disabled={submitting || form.goal.trim().length < 10}>
+            {submitting ? "Starting…" : "Start research"}
+          </button>
+          <p className="hint">Your goal is sent to an AI service (Groq). A run uses at most 8 decisions and 40 backtests.</p>
+        </div>
       </form>
 
       {runs.length > 0 && (
         <section>
-          <h2>Your research</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Goal</th>
-                <th>Symbol</th>
-                <th>Status</th>
-                <th>Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <Link to={`/research/${r.id}`}>{r.goal.length > 70 ? `${r.goal.slice(0, 70)}…` : r.goal}</Link>
-                  </td>
-                  <td>{r.symbol}</td>
-                  <td>{STATUS_LABEL[r.status] || r.status}</td>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
+          <h3>Your research</h3>
+          <div className="table-scroll">
+            <table className="trade-table">
+              <thead>
+                <tr>
+                  <th>Goal</th>
+                  <th>Symbol</th>
+                  <th>Status</th>
+                  <th>Started</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <Link to={`/research/${r.id}`}>{r.goal.length > 70 ? `${r.goal.slice(0, 70)}…` : r.goal}</Link>
+                    </td>
+                    <td className="mono">{r.symbol}</td>
+                    <td>
+                      <StatusBadge status={r.status} label={STATUS_LABEL[r.status]} />
+                    </td>
+                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>

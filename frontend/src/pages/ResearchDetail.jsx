@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import api, { errorText, num, pct, usePoll } from "../api";
 import { OBJECTIVES, STATUS_LABEL } from "../research";
-import { PageSkeleton } from "../components";
+import { PageHeader, PageSkeleton, StatusBadge } from "../components";
 
 const STAGES = ["explore", "refine", "validate", "report", "done"];
 const STAGE_LABEL = { explore: "Explore", refine: "Refine", validate: "Held-out test", report: "Report", done: "Done" };
@@ -158,13 +158,19 @@ function ResearchDetail() {
   const steps = run.steps || [];
   return (
     <div className="research">
-      <h1>Research: {run.symbol}</h1>
+      <PageHeader
+        title={`Research: ${run.symbol}`}
+        subtitle={
+          <>
+            Optimising {OBJECTIVES[run.objective]}
+            {run.max_drawdown ? `, max drawdown ${pct(run.max_drawdown, 0)}` : ""}. Research {run.start_date} to{" "}
+            {run.research_end}; held out {run.split_date} to {run.end_date}.
+          </>
+        }
+      >
+        <StatusBadge status={run.status} label={STATUS_LABEL[run.status]} />
+      </PageHeader>
       <p className="research-goal">“{run.goal}”</p>
-      <p className="hint">
-        Optimising {OBJECTIVES[run.objective]}
-        {run.max_drawdown ? `, max drawdown ${pct(run.max_drawdown, 0)}` : ""}. Research {run.start_date} to{" "}
-        {run.research_end}; held out {run.split_date} to {run.end_date}.
-      </p>
       <ol className="stages">
         {STAGES.map((s, i) => (
           <li key={s} className={i < stageIndex ? "done" : i === stageIndex ? "current" : ""}>
@@ -172,8 +178,8 @@ function ResearchDetail() {
           </li>
         ))}
       </ol>
-      <p>
-        <strong>{STATUS_LABEL[run.status] || run.status}</strong> · {run.steps_used}/{run.budgets.steps} decisions ·{" "}
+      <p className="research-budget">
+        {run.steps_used}/{run.budgets.steps} decisions ·{" "}
         {run.backtests_used}/{run.budgets.backtests} backtests · {(run.tokens_in + run.tokens_out).toLocaleString()}/
         {run.budgets.tokens.toLocaleString()} tokens
       </p>
@@ -183,37 +189,39 @@ function ResearchDetail() {
       {candidates.length > 0 && (
         <section>
           <h2>Candidates (research period)</h2>
-          <table className="candidates">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Sharpe</th>
-                <th>Return</th>
-                <th>Max DD</th>
-                <th>Trades</th>
-                <th>Eligible</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((c) => (
-                <tr key={c.id} className={run.report?.chosen.id === c.id ? "chosen" : ""} title={c.rules}>
-                  <td>{c.id}</td>
-                  <td>
-                    <Link to={`/runs/${c.run_id}`}>{c.name}</Link>
-                    {c.same_as && <span className="hint"> (same results as {c.same_as})</span>}
-                  </td>
-                  <td>{c.metrics ? num(c.metrics.sharpe_ratio) : c.status}</td>
-                  <td>{c.metrics ? pct(c.metrics.total_return) : ""}</td>
-                  <td>{c.metrics ? pct(c.metrics.max_drawdown) : ""}</td>
-                  <td>{c.metrics ? c.metrics.trade_count : ""}</td>
-                  <td>{c.metrics ? (c.eligible ? "yes" : "no") : ""}</td>
-                  <td>{c.status === "completed" && <SaveButton candidate={c} />}</td>
+          <div className="table-scroll">
+            <table className="trade-table candidates">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Sharpe</th>
+                  <th>Return</th>
+                  <th>Max DD</th>
+                  <th>Trades</th>
+                  <th>Eligible</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {candidates.map((c) => (
+                  <tr key={c.id} className={run.report?.chosen.id === c.id ? "chosen" : ""} title={c.rules}>
+                    <td>{c.id}</td>
+                    <td>
+                      <Link to={`/runs/${c.run_id}`}>{c.name}</Link>
+                      {c.same_as && <span className="hint"> (same results as {c.same_as})</span>}
+                    </td>
+                    <td>{c.metrics ? num(c.metrics.sharpe_ratio) : c.status}</td>
+                    <td>{c.metrics ? pct(c.metrics.total_return) : ""}</td>
+                    <td>{c.metrics ? pct(c.metrics.max_drawdown) : ""}</td>
+                    <td>{c.metrics ? c.metrics.trade_count : ""}</td>
+                    <td>{c.metrics ? (c.eligible ? "yes" : "no") : ""}</td>
+                    <td>{c.status === "completed" && <SaveButton candidate={c} />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
