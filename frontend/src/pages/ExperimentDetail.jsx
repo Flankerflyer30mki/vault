@@ -2,51 +2,49 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { money, num, pct, usePoll } from "../api";
+import { ChartTooltip, axisProps, compact, useChartTheme } from "../charts";
 import { Disclaimer, PageSkeleton } from "../components";
 import { METRICS, buildMatrix, heatLevel, mergeCurves, metricValue, paramLabel } from "../experiments";
 
-const COLORS = ["#4dabf7", "#ff6b6b", "#51cf66", "#ffd43b", "#be4bdb", "#ff922b", "#20c997", "#748ffc", "#f06595"];
-const BENCH_COLOR = "#aaaaaa";
+const SERIES_SHOWN = 9; // distinct series colours available (--series-1..9)
 
 function CurveChart({ runs, name, currency, benchmark }) {
+  const theme = useChartTheme();
+  const color = (i) => theme.series[i % theme.series.length];
   const all = benchmark ? [...runs, benchmark] : runs;
   const data = mergeCurves(all);
   const cur = (v) => money(v, currency);
   return (
     <div className="chart-container">
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-          <XAxis dataKey="t" stroke="#888" tick={{ fontSize: 12 }} minTickGap={40} />
-          <YAxis stroke="#888" domain={["auto", "auto"]} tick={{ fontSize: 12 }} />
-          <Tooltip
-            contentStyle={{ background: "#1a1a1a", border: "1px solid #444", fontSize: "12px", maxWidth: "260px" }}
-            labelStyle={{ color: "#888" }}
-            formatter={(v, n) => [cur(v), n]}
-          />
+      <ResponsiveContainer width="100%" height={380}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke={theme.grid} />
+          <XAxis dataKey="t" {...axisProps(theme)} minTickGap={60} />
+          <YAxis {...axisProps(theme)} domain={["auto", "auto"]} tickFormatter={compact} width={48} />
+          <Tooltip content={<ChartTooltip format={cur} />} cursor={{ stroke: theme.faint, strokeDasharray: "3 3" }} />
           {runs.map((r, i) => (
-            <Line key={r.id} type="monotone" dataKey={`run_${r.id}`} name={name(r)} stroke={COLORS[i % COLORS.length]} strokeWidth={1.5} dot={false} connectNulls />
+            <Line key={r.id} type="linear" dataKey={`run_${r.id}`} name={name(r)} stroke={color(i)} strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} connectNulls animationDuration={500} />
           ))}
           {benchmark && (
-            <Line type="monotone" dataKey={`run_${benchmark.id}`} name={`Benchmark: ${benchmark.symbol}`} stroke={BENCH_COLOR} strokeDasharray="5 4" strokeWidth={1.5} dot={false} connectNulls />
+            <Line type="linear" dataKey={`run_${benchmark.id}`} name={`Benchmark: ${benchmark.symbol}`} stroke={theme.bench} strokeDasharray="5 4" strokeWidth={1.5} dot={false} connectNulls animationDuration={500} />
           )}
         </LineChart>
       </ResponsiveContainer>
       <div className="custom-legend">
         {runs.map((r, i) => (
           <div key={r.id} className="legend-item">
-            <span className="legend-swatch" style={{ background: COLORS[i % COLORS.length] }} />
+            <span className="legend-swatch" style={{ background: color(i) }} />
             <span>{name(r)}</span>
           </div>
         ))}
         {benchmark && (
           <div className="legend-item">
-            <span className="legend-swatch" style={{ background: BENCH_COLOR }} />
+            <span className="legend-swatch legend-dashed" style={{ borderColor: theme.bench }} />
             <span>Benchmark: {benchmark.symbol} (buy and hold, no costs)</span>
           </div>
         )}
       </div>
-      <p className="hint">Curves are downsampled for the chart; each run&apos;s page has the full curve.</p>
+      <p className="chart-caption">Curves are downsampled for the chart; each run&apos;s page has the full curve.</p>
     </div>
   );
 }
@@ -265,8 +263,8 @@ function OptimizationView({ job }) {
             </table>
           </div>
           <h3>In-sample equity curves</h3>
-          <CurveChart runs={sorted.slice(0, COLORS.length)} name={paramLabel} currency={job.currency} />
-          {sorted.length > COLORS.length && <p className="hint">Showing the top {COLORS.length} by the chosen sort.</p>}
+          <CurveChart runs={sorted.slice(0, SERIES_SHOWN)} name={paramLabel} currency={job.currency} />
+          {sorted.length > SERIES_SHOWN && <p className="hint">Showing the top {SERIES_SHOWN} by the chosen sort.</p>}
         </>
       )}
     </>
