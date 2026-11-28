@@ -387,7 +387,7 @@ AND/OR, are the standard way retail tools (for example Zerodha Streak, TradingVi
 ## D-043 · Dynamic warm-up
 - **Decision:** warm-up = the largest lookback among the spec's indicators: the bars needed for a value to exist one bar before
   the first decision (so a crossover can fire on the first bar), plus 2n more for EMA-based indicators so the seed fades. Capped
-  at 600 bars. Code strategies keep 50. `load_bars` asks for `warmup × 2` calendar days and the manifest records the count.
+  at 600 bars. Code strategies keep 50. `load_bars` asks for `warmup × 2` calendar days (plus a week since D-105) and the manifest records the count.
 - **Why:** a fixed 50 would leave SMA-200 empty for 150 bars of the test period, silently changing the strategy. Smoothed
   indicators never fully forget their seed; 3n bars is a standard compromise (seed weight ≈ e⁻³ ≈ 5% for EMA).
 - **Consequence:** an EMA or RSI value on a date depends slightly on how much history precedes it, as in every charting tool.
@@ -903,3 +903,13 @@ Starting point: `main` was v1, live on Vercel (`vault-lovat-beta.vercel.app`) an
   research, polish with a `Ctrl+K` palette) so the site works after each merge.
 - **Alternatives:** Tailwind + shadcn/ui (rewrite every page's markup before anything improves; worth revisiting if
   pages need many new interactive components); a CSS-in-JS library (runtime cost, no benefit here).
+
+## D-105 · A week of margin on the warm-up lookback
+- **Context:** `load_bars` looked back `warmup × 2` calendar days for warm-up bars. With few warm-up bars that window
+  can fall entirely on a weekend or holiday: Buy and Hold (1 bar) from Monday 2024-01-01 looked only at Saturday 30
+  and Sunday 31 December and reported "only 0 of 1 warm-up bars before start" on the live site.
+- **Decision:** look back `warmup × 2 + 7` calendar days (`WARMUP_MARGIN_DAYS`). Only the last `warmup` bars are kept,
+  so strategies that already had enough warm-up see exactly the same bars and give the same results; only runs that
+  were short now get their full warm-up. No engine change, so `ENGINE_VERSION` stays.
+- **Alternatives:** an exchange holiday calendar (exact, but a dependency and per-market data for a few days' margin);
+  counting trading days from the stored bars (needs data before knowing what to fetch).

@@ -115,7 +115,7 @@ cd backend && DEBUG=1 DATABASE_URL=sqlite:///:memory: python manage.py test
 cd frontend && npm test
 ```
 
-There are 223 backend and 49 frontend tests, and none reaches Yahoo, the AI provider or Google. Some go beyond examples:
+There are 224 backend and 49 frontend tests, and none reaches Yahoo, the AI provider or Google. Some go beyond examples:
 - a **metamorphic test** proves no indicator uses future data: rewriting every bar after *t* changes nothing at or before *t*
 - a **differential test** shows the builder and the Python strategy make identical trades
 - a **concurrency test** runs 4 worker threads against Postgres and checks that none of 40 jobs is claimed twice
