@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api, { errorText, money, num, pct, toPoints, usePoll } from "../api";
-import { Assumptions, Disclaimer } from "../components";
+import { Assumptions, Disclaimer, PageSkeleton } from "../components";
 
 const SAMPLE_LABEL = {
   full: "Full period",
@@ -26,7 +26,7 @@ function RunDetail() {
       .catch((err) => setTradeError(errorText(err)));
   }, [id, status]);
 
-  if (!run) return error ? <p className="error">{error}</p> : <p>Loading…</p>;
+  if (!run) return error ? <p className="error">{error}</p> : <PageSkeleton />;
 
   const active = ["queued", "preparing_data", "running"].includes(run.status);
   const progressKnown = run.bars_total > 0 && run.bars_processed !== null;

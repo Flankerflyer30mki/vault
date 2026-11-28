@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api, { errorText, list } from "../api";
 import { CostModelFields, SymbolInput } from "../components";
 
@@ -16,6 +16,8 @@ const NUMERIC = [
 
 function RunTrigger() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [wanted] = useState(() => Number(params.get("strategy")) || null); // /run?strategy=<id> preselects it
   const [strategies, setStrategies] = useState([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -40,14 +42,15 @@ function RunTrigger() {
       .then((res) => {
         const s = list(res.data);
         setStrategies(s);
-        if (s.length) setForm((f) => ({ ...f, strategy: s[0].id }));
+        const pick = s.find((x) => x.id === wanted) || s[0];
+        if (pick) setForm((f) => ({ ...f, strategy: pick.id }));
       })
       .catch((err) => setError(errorText(err)));
     api
       .get("/strategies/catalog/")
       .then((res) => setCatalog(res.data))
       .catch(() => setCatalog(null)); // the form still works with the flat model and no suggestions
-  }, []);
+  }, [wanted]);
 
   // Same form submitted twice (double click, retry) = same key = same run. Any edit = new key.
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());

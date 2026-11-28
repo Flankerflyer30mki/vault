@@ -1,3 +1,78 @@
+// ---- page furniture shared by every page (UI redesign, D-104) ----
+
+export function PageHeader({ title, subtitle, children }) {
+  return (
+    <header className="page-header">
+      <div className="page-title">
+        <h1>{title}</h1>
+        {subtitle && <p className="page-subtitle">{subtitle}</p>}
+      </div>
+      {children && <div className="page-actions">{children}</div>}
+    </header>
+  );
+}
+
+// Grey placeholder shapes shown while a page loads: the layout appears at once instead of a "Loading…" line.
+// The text stays for screen readers (and tests).
+export function PageSkeleton({ cards = 4, rows = 5 }) {
+  return (
+    <div className="skeleton-page" role="status" aria-live="polite">
+      <span className="sr-only">Loading…</span>
+      <div className="skeleton skeleton-title" />
+      <div className="skeleton skeleton-line" style={{ width: "34%" }} />
+      {cards > 0 && (
+        <div className="skeleton-cards">
+          {Array.from({ length: cards }, (_, i) => (
+            <div key={i} className="skeleton skeleton-card" />
+          ))}
+        </div>
+      )}
+      <div className="skeleton-rows">
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className="skeleton skeleton-row" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function EmptyState({ icon: Icon, title, children, action }) {
+  return (
+    <div className="empty-state">
+      {Icon && (
+        <span className="empty-icon" aria-hidden="true">
+          <Icon size={18} />
+        </span>
+      )}
+      <div>
+        <p className="empty-title">{title}</p>
+        {children && <p className="empty-text">{children}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+const STATUS = {
+  queued: ["Queued", "neutral"],
+  preparing_data: ["Preparing data", "active"],
+  running: ["Running", "active"],
+  completed: ["Completed", "pos"],
+  failed: ["Failed", "neg"],
+  partially_completed: ["Partly done", "warn"],
+  waiting: ["Waiting", "neutral"],
+};
+
+export function StatusBadge({ status }) {
+  const [label, tone] = STATUS[status] || [String(status).replace(/_/g, " "), "neutral"];
+  return (
+    <span className={`status status-${tone}`}>
+      <span className="status-dot" aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
 export function Disclaimer() {
   return (
     <p className="hint">
