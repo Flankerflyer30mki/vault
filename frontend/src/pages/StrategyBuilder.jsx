@@ -1,8 +1,9 @@
+import { Code2, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import api, { errorText } from "../api";
 import AssistPanel from "../builder/AssistPanel";
-import { PageSkeleton } from "../components";
+import { PageHeader, PageSkeleton } from "../components";
 import {
   blankSpec,
   conditionsOf,
@@ -116,11 +117,26 @@ function OperandEditor({ operand, path, label, catalog, errors, onChange }) {
   );
 }
 
-function ConditionRow({ cond, path, label, catalog, errors, onChange, onRemove, canRemove }) {
+function ConditionRow({ cond, path, label, index, catalog, errors, onChange, onRemove, canRemove }) {
   const rowErrors = errorsUnder(errors, path).length > 0;
   return (
     <li className={`condition${rowErrors ? " has-error" : ""}`}>
-      <p className="condition-summary">{describe(catalog, cond)}</p>
+      <div className="condition-head">
+        <span className="condition-index" aria-hidden="true">
+          {index + 1}
+        </span>
+        <p className="condition-summary">{describe(catalog, cond)}</p>
+        <button
+          type="button"
+          className="ghost small icon-only danger-hover"
+          onClick={onRemove}
+          disabled={!canRemove}
+          aria-label={`Remove ${label}`}
+          title={canRemove ? "Remove" : "A group needs at least one condition"}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      </div>
       <div className="condition-fields">
         <OperandEditor
           operand={cond.left}
@@ -130,7 +146,14 @@ function ConditionRow({ cond, path, label, catalog, errors, onChange, onRemove, 
           errors={errors}
           onChange={(left) => onChange({ ...cond, left })}
         />
-        <select aria-label={`${label} operator`} value={cond.op} onChange={(e) => onChange({ ...cond, op: e.target.value })}>
+        {/* Line break: the left side on the first line, "is above <right side>" on the second. */}
+        <span className="field-break" aria-hidden="true" />
+        <select
+          className="operator"
+          aria-label={`${label} operator`}
+          value={cond.op}
+          onChange={(e) => onChange({ ...cond, op: e.target.value })}
+        >
           {catalog.operators.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}
@@ -145,9 +168,6 @@ function ConditionRow({ cond, path, label, catalog, errors, onChange, onRemove, 
           errors={errors}
           onChange={(right) => onChange({ ...cond, right })}
         />
-        <button type="button" className="secondary small" onClick={onRemove} disabled={!canRemove} aria-label={`Remove ${label}`}>
-          Remove
-        </button>
       </div>
       <FieldError errors={errors} path={`${path}.op`} />
       <FieldError errors={errors} path={path} />
@@ -160,20 +180,22 @@ function GroupEditor({ side, group, catalog, errors, onChange }) {
   const conds = conditionsOf(group);
   const setConds = (next) => onChange({ [mode]: next });
   return (
-    <fieldset className="group">
+    <fieldset className={`group group-${side}`}>
       <legend>{SIDE[side].title}</legend>
-      <p className="hint">{SIDE[side].help}</p>
-      <label>
-        Combine
+      <div className="group-sentence">
         <select aria-label={`${side} combine`} value={mode} onChange={(e) => onChange({ [e.target.value]: conds })}>
-          <option value="all">all of these are true (AND)</option>
-          <option value="any">any of these is true (OR)</option>
+          <option value="all">all</option>
+          <option value="any">any</option>
         </select>
-      </label>
+        <span>
+          of these conditions {mode === "all" ? "are" : "is"} true. {SIDE[side].help}
+        </span>
+      </div>
       <ol className="conditions">
         {conds.map((c, i) => (
           <ConditionRow
             key={i}
+            index={i}
             cond={c}
             path={`${side}.${mode}[${i}]`}
             label={`${side} condition ${i + 1}`}
@@ -189,14 +211,22 @@ function GroupEditor({ side, group, catalog, errors, onChange }) {
       <FieldError errors={errors} path={`${side}.${mode}`} />
       <button
         type="button"
-        className="secondary"
+        className="ghost small add-condition"
         disabled={conds.length >= catalog.max_conditions}
         onClick={() => setConds([...conds, makeCondition(catalog, side === "entry" ? ">" : "<")])}
       >
+        <Plus size={13} aria-hidden="true" />
         Add condition ({conds.length}/{catalog.max_conditions})
       </button>
     </fieldset>
   );
+}
+
+// The rules read back as one sentence per group (each sentence is a single text node).
+function ruleSentence(catalog, title, group) {
+  const conds = conditionsOf(group);
+  const joiner = groupMode(group) === "all" ? " and " : " or ";
+  return `${title} ${conds.map((c) => describe(catalog, c)).join(joiner)}`;
 }
 
 function StrategyBuilder() {
@@ -269,11 +299,10 @@ function StrategyBuilder() {
 
   return (
     <div className="builder">
-      <h1>{id ? "Edit strategy" : "New strategy"}</h1>
-      <p className="hint">
-        On every bar: if the sell group is true, sell; otherwise, if the buy group is true, buy. Orders fill at the next
-        bar&apos;s open. Long-only: the strategy is either fully invested or in cash.
-      </p>
+      <PageHeader
+        title={id ? "Edit strategy" : "New strategy"}
+        subtitle="On every bar: if the sell rules are true, sell; otherwise, if the buy rules are true, buy. Orders fill at the next bar's open. Long-only: fully invested or in cash."
+      />
       {catalog.ai_enabled && (
         <AssistPanel
           onSpec={(spec, suggested) => {
@@ -284,51 +313,69 @@ function StrategyBuilder() {
       )}
       {/* noValidate: the server is the one source of truth, so its message shows on the field (the same wording
           as the live check) instead of the browser's own popup. min/max still drive the number spinners. */}
-      <form onSubmit={save} noValidate>
-        <label className="builder-name">
-          Name
-          <input type="text" value={name} maxLength={100} required onChange={(e) => setName(e.target.value)} />
-        </label>
-        {["entry", "exit"].map((side) => (
-          <GroupEditor
-            key={side}
-            side={side}
-            group={state[side]}
-            catalog={catalog}
-            errors={errors}
-            onChange={(group) => setState({ ...state, [side]: group })}
-          />
-        ))}
+      <form onSubmit={save} noValidate className="builder-grid">
+        <div className="builder-main">
+          <label className="builder-name">
+            Name
+            <input
+              type="text"
+              value={name}
+              maxLength={100}
+              required
+              placeholder="e.g. RSI dip with trend filter"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          {["entry", "exit"].map((side) => (
+            <GroupEditor
+              key={side}
+              side={side}
+              group={state[side]}
+              catalog={catalog}
+              errors={errors}
+              onChange={(group) => setState({ ...state, [side]: group })}
+            />
+          ))}
+          {preview && problems === 0 && (
+            <details className="code-view">
+              <summary>
+                <Code2 size={14} aria-hidden="true" />
+                View as Python (read-only; Vault runs the spec, never this code)
+              </summary>
+              <pre>{preview.python}</pre>
+            </details>
+          )}
+        </div>
 
-        <section className="preview" aria-live="polite">
-          {problems > 0 ? (
-            <p className="error">
-              {problems} problem{problems > 1 ? "s" : ""} to fix.
-            </p>
-          ) : (
-            preview && (
-              <>
+        <aside className="builder-side">
+          <div className="summary-card" aria-live="polite">
+            <p className="summary-label">Your rules</p>
+            <p className="rule rule-entry">{ruleSentence(catalog, "Buy when", state.entry)}</p>
+            <p className="rule rule-exit">{ruleSentence(catalog, "Sell when", state.exit)}</p>
+            <div className="summary-status">
+              {problems > 0 ? (
+                <p className="error">
+                  {problems} problem{problems > 1 ? "s" : ""} to fix.
+                </p>
+              ) : preview ? (
                 <p className="hint">
                   Needs {preview.warmup_bars} warm-up bar{preview.warmup_bars > 1 ? "s" : ""} before the start date.
                 </p>
-                <details>
-                  <summary>View as Python (read-only; Vault runs the spec, never this code)</summary>
-                  <pre>{preview.python}</pre>
-                </details>
-              </>
-            )
-          )}
-        </section>
-
-        {formError && <p className="error pre">{formError}</p>}
-        <div className="builder-actions">
-          <button type="submit" disabled={saving}>
-            {saving ? "Saving…" : id ? "Save changes" : "Save strategy"}
-          </button>
-          <Link className="button secondary" to="/strategies">
-            Cancel
-          </Link>
-        </div>
+              ) : (
+                <p className="hint">Checking…</p>
+              )}
+            </div>
+            {formError && <p className="error pre">{formError}</p>}
+            <div className="builder-actions">
+              <button type="submit" disabled={saving}>
+                {saving ? "Saving…" : id ? "Save changes" : "Save strategy"}
+              </button>
+              <Link className="button secondary" to="/strategies">
+                Cancel
+              </Link>
+            </div>
+          </div>
+        </aside>
       </form>
     </div>
   );
