@@ -512,11 +512,11 @@ class BuilderApiTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.strategy_spec, frozen)  # editing the strategy never rewrites history
         # re-running the same frozen run gives the same result (deterministic)
-        first = (run.final_value, list(Trade.objects.filter(run=run).values_list("side", "ts", "price")))
+        first = (run.final_value, list(Trade.objects.filter(run=run).order_by("ts", "pk").values_list("side", "ts", "price")))
         BacktestRun.objects.filter(id=run.id).update(status="queued")
         jobs.work_one("w2")
         run.refresh_from_db()
-        self.assertEqual((run.final_value, list(Trade.objects.filter(run=run).values_list("side", "ts", "price"))), first)
+        self.assertEqual((run.final_value, list(Trade.objects.filter(run=run).order_by("ts", "pk").values_list("side", "ts", "price"))), first)
 
     def test_india_delivery_run(self):
         sid = self.create().json()["id"]
