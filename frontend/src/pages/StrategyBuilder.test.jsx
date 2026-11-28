@@ -70,6 +70,15 @@ describe("StrategyBuilder", () => {
     expect(await screen.findByText(/Needs 26 warm-up bars/)).toBeTruthy();
   });
 
+  it("reads the rules back as sentences that follow the form", async () => {
+    const user = userEvent.setup();
+    renderAt("/strategies/new");
+    expect(await screen.findByText("Buy when SMA(20) is above close")).toBeTruthy();
+    await user.click(screen.getAllByRole("button", { name: "Add condition (1/3)" })[0]); // the buy group's
+    await user.selectOptions(screen.getByLabelText("entry combine"), "any");
+    expect(screen.getByText("Buy when SMA(20) is above close or SMA(20) is above close")).toBeTruthy();
+  });
+
   it("shows an indicator's own parameters and outputs when it is chosen", async () => {
     const user = renderAt("/strategies/new");
     const indicator = await screen.findByLabelText("entry condition 1 left indicator");

@@ -266,9 +266,15 @@ a.button.ghost:hover {
   background: var(--bg-hover);
 }
 
-button.icon-only {
+button.icon-only,
+button.small.icon-only {
   width: 26px;
   padding: 0;
+}
+
+button svg,
+a.button svg {
+  flex-shrink: 0;
 }
 
 button.danger-hover:hover {
