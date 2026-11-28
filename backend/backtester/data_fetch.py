@@ -22,6 +22,10 @@ PROVIDER = {"provider": "yahoo", "adjusted": True, "interval": "1d"}
 MAX_GAP_DAYS = 5      # longest normal weekend + holiday run; longer gaps are reported
 EDGE_SLACK_DAYS = 5
 WARMUP_CALENDAR_PER_BAR = 2  # ~2 calendar days per trading day covers weekends and holidays
+# Plus a fixed week: with few warm-up bars, 2 days per bar can land entirely on a weekend or holiday (1 bar before
+# Monday 2024-01-01 looked only at Sat 30 and Sun 31 Dec). Only the last `warmup_bars` bars are used, so the extra
+# days never change what a strategy sees when the shorter window already had enough.
+WARMUP_MARGIN_DAYS = 7
 
 
 class DataError(Exception):
@@ -127,7 +131,7 @@ def load_bars(symbol, start, end, fetch=None, warmup_bars=WARMUP_BARS):
     Partial data is allowed but labelled in manifest['warnings']; no bars at all raises DataError.
     warmup_bars: bars needed before `start` (50 for code strategies; builder strategies ask for their longest lookback)."""
     end = min(end, datetime.now(UTC).date())
-    warm_start = start - timedelta(days=warmup_bars * WARMUP_CALENDAR_PER_BAR)
+    warm_start = start - timedelta(days=warmup_bars * WARMUP_CALENDAR_PER_BAR + WARMUP_MARGIN_DAYS)
     rejected = 0
     if not _covered(symbol, warm_start, end):
         rejected = _refresh(symbol, warm_start, end, fetch or download)  # looked up per call so tests can patch it

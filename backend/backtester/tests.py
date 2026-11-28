@@ -179,6 +179,17 @@ class DataTests(TestCase):
         self.assertEqual(manifest["warnings"], [])
         self.assertEqual(manifest["warmup_bars"], engine.WARMUP_BARS)
 
+    def test_warmup_reaches_past_a_weekend_and_holiday(self):
+        # 1 warm-up bar before Monday 2024-01-01 (a holiday): 2 calendar days per bar only reached Sat 30 and Sun 31
+        # Dec, so the run reported "only 0 of 1 warm-up bars". The fixed margin reaches Friday 29 Dec.
+        weekdays = [b for b in make_bars("NYD", date(2023, 12, 1), 70) if b.ts.weekday() < 5 and b.ts.date() != date(2024, 1, 1)]
+        warmup, bars, manifest = data_fetch.load_bars("NYD", date(2024, 1, 1), date(2024, 1, 31),
+                                                      fetch=lambda *a: (weekdays, 0), warmup_bars=1)
+        self.assertEqual([b.ts.date() for b in warmup], [date(2023, 12, 29)])
+        self.assertEqual(bars[0].ts.date(), date(2024, 1, 2))
+        self.assertEqual(manifest["warmup_bars"], 1)
+        self.assertFalse(any("warm-up" in w for w in manifest["warnings"]))
+
     def test_gaps_are_labelled_and_invalid_rows_rejected(self):
         rows = make_bars("MSFT", date(2023, 9, 1), 200) + make_bars("MSFT", date(2024, 5, 1), 60)
         data_fetch.load_bars("MSFT", date(2024, 1, 1), date(2024, 6, 29), fetch=lambda *a: (rows, 3))
