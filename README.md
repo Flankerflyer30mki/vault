@@ -97,7 +97,7 @@ Things that only showed up once the system ran for real, and what was done about
 ## Stack
 
 **Backend:** Python 3.12, Django 6, Django REST Framework, PostgreSQL 16, gunicorn, drf-spectacular, google-auth, yfinance, Groq (OpenAI-compatible HTTP).<br>
-**Frontend:** React 19, Vite, Recharts, axios, Vitest with React Testing Library.<br>
+**Frontend:** React 19, Vite, Recharts, axios, lucide icons, Vitest with React Testing Library. A token-based design system (dark and light themes) and a `Ctrl+K` command palette.<br>
 **Infrastructure:** Docker Compose; Vercel for the frontend and Render for the API and database; GitHub Actions CI. Request IDs, JSON logs, a Prometheus `/metrics` endpoint and an OpenAPI schema.
 
 ## Run it locally
@@ -115,7 +115,7 @@ cd backend && DEBUG=1 DATABASE_URL=sqlite:///:memory: python manage.py test
 cd frontend && npm test
 ```
 
-There are 223 backend and 34 frontend tests, and none reaches Yahoo, the AI provider or Google. Some go beyond examples:
+There are 223 backend and 49 frontend tests, and none reaches Yahoo, the AI provider or Google. Some go beyond examples:
 - a **metamorphic test** proves no indicator uses future data: rewriting every bar after *t* changes nothing at or before *t*
 - a **differential test** shows the builder and the Python strategy make identical trades
 - a **concurrency test** runs 4 worker threads against Postgres and checks that none of 40 jobs is claimed twice
