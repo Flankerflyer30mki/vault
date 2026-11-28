@@ -1,4 +1,51 @@
+import { useId, useRef, useState } from "react";
+
 // ---- page furniture shared by every page (UI redesign, D-104) ----
+
+// tabs = [{ id, label, content }]. Arrow keys move between tabs (WAI-ARIA tabs pattern).
+export function Tabs({ tabs, label }) {
+  const [current, setCurrent] = useState(tabs[0].id);
+  const base = useId();
+  const refs = useRef({});
+  const select = (i) => {
+    const tab = tabs[(i + tabs.length) % tabs.length];
+    setCurrent(tab.id);
+    refs.current[tab.id]?.focus();
+  };
+  const onKeyDown = (e, i) => {
+    if (e.key === "ArrowRight") select(i + 1);
+    else if (e.key === "ArrowLeft") select(i - 1);
+    else return;
+    e.preventDefault();
+  };
+  const active = tabs.find((t) => t.id === current) || tabs[0];
+  return (
+    <div className="tabs">
+      <div role="tablist" aria-label={label} className="tab-list">
+        {tabs.map((t, i) => (
+          <button
+            key={t.id}
+            ref={(el) => (refs.current[t.id] = el)}
+            type="button"
+            role="tab"
+            id={`${base}-tab-${t.id}`}
+            aria-selected={t.id === active.id}
+            aria-controls={`${base}-panel`}
+            tabIndex={t.id === active.id ? 0 : -1}
+            className="tab"
+            onClick={() => setCurrent(t.id)}
+            onKeyDown={(e) => onKeyDown(e, i)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${active.id}`} className="tab-panel">
+        {active.content}
+      </div>
+    </div>
+  );
+}
 
 export function PageHeader({ title, subtitle, children }) {
   return (

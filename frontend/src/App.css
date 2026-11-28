@@ -1124,9 +1124,249 @@ ul.hint li + li {
   border-top: 1px dashed var(--border-strong);
 }
 
+/* ================= run results ================= */
+.hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 24px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.hero-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 16px 18px;
+}
+
+.hero-metric + .hero-metric {
+  border-left: 1px solid var(--border);
+}
+
+.hero-metric span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.hero-metric strong {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.hero-metric small {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-metric strong.pos {
+  color: var(--pos);
+}
+
+.hero-metric strong.neg {
+  color: var(--neg);
+}
+
+@media (max-width: 900px) {
+  .hero-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hero-metric + .hero-metric {
+    border-left: none;
+  }
+
+  .hero-metric {
+    border-top: 1px solid var(--border);
+  }
+
+  .hero-metric:nth-child(-n + 2) {
+    border-top: none;
+  }
+
+  .hero-metric:nth-child(even) {
+    border-left: 1px solid var(--border);
+  }
+}
+
+/* Label/value pairs in a row (secondary metrics, reproducibility). */
+.stat-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 36px;
+  margin: 12px 0;
+}
+
+.stat-list-wide {
+  margin: 18px 0 28px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stat-list div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-list dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.stat-list dd {
+  margin: 0;
+  font-weight: 500;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-table .num {
+  text-align: right;
+}
+
+.trade-table td.muted {
+  color: var(--text-muted);
+}
+
+.side {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.side-buy {
+  color: var(--pos);
+  background: var(--pos-bg);
+}
+
+.side-sell {
+  color: var(--neg);
+  background: var(--neg-bg);
+}
+
+/* Tabs: an underline under the current one. */
+.tabs {
+  margin-top: 8px;
+}
+
+.tab-list {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tab {
+  position: relative;
+  height: 36px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.tab:hover {
+  color: var(--text-h);
+  background: transparent;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text-h);
+}
+
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.tab-panel {
+  padding-top: 16px;
+  animation: page-in 140ms var(--ease);
+}
+
+.tab-panel > .table-scroll,
+.tab-panel > ul.hint {
+  margin-top: 0;
+}
+
 /* ================= charts ================= */
 .chart-container {
-  padding: 18px 18px 14px;
+  padding: 18px 18px 10px 6px;
+}
+
+.chart-caption {
+  margin: 6px 0 0 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.chart-tooltip {
+  min-width: 160px;
+  max-width: 280px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+
+.chart-tooltip-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-tooltip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.chart-tooltip-row strong {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-table td {
+  white-space: nowrap;
+}
+
+.legend-dashed {
+  width: 16px;
+  background: none;
+  border-top: 2px dashed;
+  height: 0;
+  border-radius: 0;
 }
 
 .custom-legend {

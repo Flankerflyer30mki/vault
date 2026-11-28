@@ -17,13 +17,13 @@ const NUMERIC = [
 function RunTrigger() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [wanted] = useState(() => Number(params.get("strategy")) || null); // /run?strategy=<id> preselects it
+  const [wanted] = useState(() => Number(params.get("strategy")) || null); // /run?strategy=<id>&symbol=<s> preselects them
   const [strategies, setStrategies] = useState([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     strategy: "",
-    symbol: "AAPL",
+    symbol: (params.get("symbol") || "AAPL").toUpperCase(), // "Run again" passes the symbol
     start_date: "2024-01-01",
     end_date: today,
     starting_cash: "10000",

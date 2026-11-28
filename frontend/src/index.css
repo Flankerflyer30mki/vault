@@ -31,6 +31,18 @@
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
   --focus: 0 0 0 3px rgba(139, 149, 247, 0.35);
 
+  /* Chart series: distinct in hue, similar in weight; the benchmark is grey. */
+  --series-1: #8b95f7;
+  --series-2: #4cc38a;
+  --series-3: #f0b13a;
+  --series-4: #f2666a;
+  --series-5: #5ec4e8;
+  --series-6: #d17cf0;
+  --series-7: #f08a4b;
+  --series-8: #a3d45c;
+  --series-9: #f06ba8;
+  --chart-bench: #8a8f98;
+
   --radius: 8px;
   --radius-sm: 6px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -76,6 +88,16 @@
   --code-bg: #f7f7f8;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   --focus: 0 0 0 3px rgba(94, 106, 210, 0.25);
+  --series-1: #5e6ad2;
+  --series-2: #15803d;
+  --series-3: #b7791f;
+  --series-4: #c62828;
+  --series-5: #0e7490;
+  --series-6: #9333ea;
+  --series-7: #c2410c;
+  --series-8: #4d7c0f;
+  --series-9: #be185d;
+  --chart-bench: #8b8f97;
   color-scheme: light;
 }
 
