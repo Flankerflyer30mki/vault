@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { errorText } from "../api";
 import { useAuth } from "../auth";
+import { PageHeader } from "../components";
 import GoogleButton from "../GoogleButton";
 
 // One small form per action. Each POSTs, shows the server's answer, and updates the signed-in user.
@@ -29,7 +30,7 @@ function ActionForm({ title, fields, url, submitLabel, onDone, danger = false, n
   };
 
   return (
-    <form onSubmit={submit} className="auth-form account-section">
+    <form onSubmit={submit} className={`auth-form account-section${danger ? " danger-zone" : ""}`}>
       <h3>{title}</h3>
       {note && <p className="hint">{note}</p>}
       {fields.map((f) => (
@@ -69,10 +70,15 @@ function Account() {
 
   return (
     <div className="account-page">
-      <h1>Account</h1>
-      <p>
-        {user.is_guest ? "Guest workspace" : user.email} · <span className={`tier tier-${user.tier}`}>{user.tier}</span>
-      </p>
+      <PageHeader
+        title="Account"
+        subtitle={
+          <>
+            {user.is_guest ? "Guest workspace" : user.email} ·{" "}
+            <span className={`tier tier-${user.tier}`}>{user.tier}</span>
+          </>
+        }
+      />
       {user.tier === "unverified" && (
         <p className="hint">
           Your email isn&apos;t verified yet, so your limits are lower.{" "}

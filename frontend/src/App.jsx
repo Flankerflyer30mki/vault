@@ -5,6 +5,7 @@ import {
   LogOut,
   Moon,
   Play,
+  Search,
   SlidersHorizontal,
   Sun,
   UserRound,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AuthProvider, GuestOnly, RequireAuth, useAuth } from "./auth";
+import CommandPalette, { SHORTCUT, openPalette } from "./CommandPalette";
 import { useTheme } from "./theme";
 import Account from "./pages/Account";
 import { ForgotPassword, Login, ResetPassword, Signup, VerifyEmail } from "./pages/Auth";
@@ -83,6 +85,11 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <Brand />
+      <button type="button" className="search-button" onClick={openPalette} aria-keyshortcuts="Control+K">
+        <Search size={14} aria-hidden="true" />
+        <span className="search-label">Search…</span>
+        <kbd aria-hidden="true">{SHORTCUT}</kbd>
+      </button>
       <nav aria-label="Main" className="nav-groups">
         {NAV.map((group) => (
           <div key={group.label} className="nav-group">
@@ -199,6 +206,7 @@ function Shell({ children }) {
   }
   return (
     <div className="shell">
+      <CommandPalette />
       <Sidebar />
       <div className="main">
         <Banner />
