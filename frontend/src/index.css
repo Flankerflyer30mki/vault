@@ -232,6 +232,28 @@ a.button.secondary:hover {
   color: var(--text-h);
 }
 
+button.ghost,
+a.button.ghost {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+button.ghost:hover,
+a.button.ghost:hover {
+  color: var(--text-h);
+  background: var(--bg-hover);
+}
+
+button.icon-only {
+  width: 26px;
+  padding: 0;
+}
+
+button.danger-hover:hover {
+  color: var(--neg);
+  background: var(--neg-bg);
+}
+
 button.danger {
   color: #fff;
   background: #c93c40;

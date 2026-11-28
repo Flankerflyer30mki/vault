@@ -317,6 +317,7 @@ API with an embedded worker on Render (`vault-api-pqje.onrender.com`, free plan,
 | Emails logged without SMTP are plain text: links were quoted-printable (`=3D`, split lines) and failed when copied | #15 | — |
 | Sign in with Google (`POST /api/auth/google/`, button on sign-in, sign-up and the guest Account page); `has_password` on the user; `google_client_id` on `/api/auth/me/`; a `/privacy` page (required by Google's consent screen) and a footer | #16 | D-103 |
 | UI redesign 1/6, foundation: design tokens (dark default + light theme), Inter + JetBrains Mono self-hosted, sidebar layout (top bar on phones), restyled controls, tables, badges and cards; fixes centred text (Vite template leftover) and grey buttons | #18 | D-104 |
+| UI redesign 2/6, lists: page headers; dashboard as clickable rows (result vs buy & hold, status badges), "Running now" only while something runs, empty states with a next step, usage moved to the bottom; Strategies as one expandable list with a name filter and a Backtest shortcut per strategy (`/run?strategy=<id>` preselects it); skeleton placeholders replace "Loading…" on every page | #19 | D-104 |
 | Fix: New Backtest couldn't be submitted with stop-loss/take-profit set (step 0.01 counted from min 0.001 made 0.08 and 0.15 invalid; the browser refused silently). Both now start blank and accept any 0.001 step; regression tests added | #18 | D-104 |
 
 ### Configuration applied (Render `vault-api`)

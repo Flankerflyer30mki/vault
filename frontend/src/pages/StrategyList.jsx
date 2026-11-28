@@ -1,6 +1,8 @@
+import { ChevronRight, Copy, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { errorText, list } from "../api";
+import { EmptyState, PageHeader, PageSkeleton } from "../components";
 
 const TEMPLATE = `def on_bar(bar, indicators, state):
     fast, slow = indicators.get('sma_10'), indicators.get('sma_50')
@@ -9,42 +11,56 @@ const TEMPLATE = `def on_bar(bar, indicators, state):
     return "BUY" if fast > slow else "SELL"
 `;
 
+// One strategy: a row that expands to show its rules (builder, as read-only Python) or its code.
 function StrategyCard({ strategy, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const builder = strategy.kind === "builder";
   return (
-    <li>
-      <button
-        type="button"
-        className="strategy-card-header"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <strong>{strategy.name}</strong>
-        {strategy.is_builtin && <span className="badge">built-in</span>}
-        <span className="badge badge-kind">{builder ? "builder" : "code"}</span>
-        <span className="strategy-meta">
-          id: {strategy.id} · {expanded ? "Hide ▲" : builder ? "Show rules ▼" : "Show code ▼"}
-        </span>
-      </button>
-      {expanded && <pre>{builder ? strategy.python : strategy.code}</pre>}
-      <div className="strategy-actions">
-        {builder && (
-          <Link className="button secondary small" to={`/strategies/new?from=${strategy.id}`}>
-            Use as template
+    <li className={expanded ? "expanded" : undefined}>
+      <div className="strategy-row">
+        <button
+          type="button"
+          className="strategy-card-header"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+          title={expanded ? "Hide" : builder ? "Show rules" : "Show code"}
+        >
+          <ChevronRight className="expand-chevron" size={15} aria-hidden="true" />
+          <span className="strategy-name">{strategy.name}</span>
+          <span className="badge badge-kind">{builder ? "builder" : "code"}</span>
+          <span className="sr-only">{expanded ? "Hide" : builder ? "Show rules" : "Show code"}</span>
+        </button>
+        <div className="strategy-actions">
+          <Link className="button ghost small" to={`/run?strategy=${strategy.id}`}>
+            <Play size={13} aria-hidden="true" />
+            Backtest
           </Link>
-        )}
-        {builder && !strategy.is_builtin && (
-          <Link className="button secondary small" to={`/strategies/${strategy.id}/edit`}>
-            Edit
-          </Link>
-        )}
-        {!strategy.is_builtin && (
-          <button type="button" className="secondary small" onClick={() => onDelete(strategy)}>
-            Delete
-          </button>
-        )}
+          {builder && (
+            <Link className="button ghost small" to={`/strategies/new?from=${strategy.id}`}>
+              <Copy size={13} aria-hidden="true" />
+              Use as template
+            </Link>
+          )}
+          {builder && !strategy.is_builtin && (
+            <Link className="button ghost small" to={`/strategies/${strategy.id}/edit`}>
+              <Pencil size={13} aria-hidden="true" />
+              Edit
+            </Link>
+          )}
+          {!strategy.is_builtin && (
+            <button
+              type="button"
+              className="ghost small icon-only danger-hover"
+              onClick={() => onDelete(strategy)}
+              aria-label={`Delete ${strategy.name}`}
+              title="Delete"
+            >
+              <Trash2 size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
+      {expanded && <pre>{builder ? strategy.python : strategy.code}</pre>}
     </li>
   );
 }
@@ -97,15 +113,19 @@ function CodeStrategyForm({ onCreated }) {
 }
 
 function StrategyList() {
-  const [strategies, setStrategies] = useState([]);
+  const [strategies, setStrategies] = useState(null); // null = still loading
   const [codeEnabled, setCodeEnabled] = useState(false);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
 
   const fetchStrategies = () =>
     api
       .get("/strategies/")
       .then((res) => setStrategies(list(res.data)))
-      .catch((err) => setError(errorText(err)));
+      .catch((err) => {
+        setStrategies((s) => s || []);
+        setError(errorText(err));
+      });
 
   useEffect(() => {
     fetchStrategies();
@@ -124,22 +144,52 @@ function StrategyList() {
       .catch((err) => setError(errorText(err)));
   };
 
-  const mine = strategies.filter((s) => !s.is_builtin);
-  const builtins = strategies.filter((s) => s.is_builtin);
+  if (strategies === null) return <PageSkeleton cards={0} rows={8} />;
+
+  const q = query.trim().toLowerCase();
+  const shown = q ? strategies.filter((s) => s.name.toLowerCase().includes(q)) : strategies;
+  const mine = shown.filter((s) => !s.is_builtin);
+  const builtins = shown.filter((s) => s.is_builtin);
+  const ownCount = strategies.filter((s) => !s.is_builtin).length;
 
   return (
     <div>
-      <div className="page-head">
-        <h1>Strategies</h1>
+      <PageHeader title="Strategies" subtitle="Rules that decide when to buy and sell. Start from a template or build your own.">
         <Link className="button" to="/strategies/new">
+          <Plus size={14} aria-hidden="true" />
           New strategy
         </Link>
-      </div>
+      </PageHeader>
       {error && <p className="error pre">{error}</p>}
 
-      <h3>Your strategies</h3>
-      {mine.length === 0 ? (
-        <p className="hint">None yet. Build one from scratch, or start from a built-in template below.</p>
+      <label className="search-field">
+        <Search size={14} aria-hidden="true" />
+        <input
+          type="search"
+          placeholder="Filter strategies…"
+          aria-label="Filter strategies"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </label>
+
+      <h3>
+        Your strategies <span className="count">{mine.length}</span>
+      </h3>
+      {ownCount === 0 ? (
+        <EmptyState
+          icon={Workflow}
+          title="No strategies of your own yet"
+          action={
+            <Link className="button small" to="/strategies/new">
+              Build one
+            </Link>
+          }
+        >
+          Build one from scratch, or use a built-in template below as a starting point.
+        </EmptyState>
+      ) : mine.length === 0 ? (
+        <p className="hint">No match.</p>
       ) : (
         <ul className="strategy-list">
           {mine.map((s) => (
@@ -148,12 +198,21 @@ function StrategyList() {
         </ul>
       )}
 
-      <h3>Built-in strategies and templates</h3>
-      <ul className="strategy-list">
-        {builtins.map((s) => (
-          <StrategyCard key={s.id} strategy={s} onDelete={handleDelete} />
-        ))}
-      </ul>
+      <h3>
+        Built-in strategies and templates <span className="count">{builtins.length}</span>
+      </h3>
+      {builtins.length === 0 ? (
+        <p className="hint">No match.</p>
+      ) : (
+        <ul className="strategy-list">
+          {builtins.map((s) => (
+            <StrategyCard key={s.id} strategy={s} onDelete={handleDelete} />
+          ))}
+        </ul>
+      )}
+      {!codeEnabled && (
+        <p className="hint">Custom Python strategies are turned off on this deployment; the builder is always available.</p>
+      )}
 
       {codeEnabled && <CodeStrategyForm onCreated={fetchStrategies} />}
     </div>

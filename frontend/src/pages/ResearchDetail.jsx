@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import api, { errorText, num, pct, usePoll } from "../api";
 import { OBJECTIVES, STATUS_LABEL } from "../research";
+import { PageSkeleton } from "../components";
 
 const STAGES = ["explore", "refine", "validate", "report", "done"];
 const STAGE_LABEL = { explore: "Explore", refine: "Refine", validate: "Held-out test", report: "Report", done: "Done" };
@@ -151,7 +152,7 @@ function ResearchDetail() {
   const { id } = useParams();
   const { data: run, error } = usePoll(`/research/${id}/`, 2000);
   if (error && !run) return <p className="error">{error}</p>;
-  if (!run) return <p>Loading…</p>;
+  if (!run) return <PageSkeleton />;
   const stageIndex = STAGES.indexOf(run.stage);
   const candidates = run.candidates || [];
   const steps = run.steps || [];

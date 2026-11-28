@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api, { errorText, list } from "../api";
-import { SymbolInput } from "../components";
+import { PageSkeleton, SymbolInput } from "../components";
 import { OBJECTIVES, STATUS_LABEL } from "../research";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -43,7 +43,7 @@ function Research() {
       });
   };
 
-  if (!catalog) return <p>Loading…</p>;
+  if (!catalog) return <PageSkeleton cards={0} />;
   if (!catalog.ai_enabled) return <p className="hint">AI research isn&apos;t configured on this deployment.</p>;
 
   return (

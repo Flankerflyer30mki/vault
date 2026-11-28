@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { money, num, pct, usePoll } from "../api";
-import { Disclaimer } from "../components";
+import { Disclaimer, PageSkeleton } from "../components";
 import { METRICS, buildMatrix, heatLevel, mergeCurves, metricValue, paramLabel } from "../experiments";
 
 const COLORS = ["#4dabf7", "#ff6b6b", "#51cf66", "#ffd43b", "#be4bdb", "#ff922b", "#20c997", "#748ffc", "#f06595"];
@@ -276,7 +276,7 @@ function OptimizationView({ job }) {
 function ExperimentDetail() {
   const { id } = useParams();
   const { data: job, error } = usePoll(`/experiments/${id}/`, 2500);
-  if (!job) return error ? <p className="error">{error}</p> : <p>Loading…</p>;
+  if (!job) return error ? <p className="error">{error}</p> : <PageSkeleton />;
 
   const runs = job.runs || [];
   const children = runs.filter((r) => r.sample === "in" || r.sample === "full");

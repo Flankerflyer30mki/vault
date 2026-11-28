@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import api, { errorText } from "../api";
 import AssistPanel from "../builder/AssistPanel";
+import { PageSkeleton } from "../components";
 import {
   blankSpec,
   conditionsOf,
@@ -263,7 +264,7 @@ function StrategyBuilder() {
       .finally(() => setSaving(false));
   };
 
-  if (!catalog || !state) return formError ? <p className="error">{formError}</p> : <p>Loading…</p>;
+  if (!catalog || !state) return formError ? <p className="error">{formError}</p> : <PageSkeleton cards={0} rows={4} />;
   const problems = Object.keys(errors).length;
 
   return (
