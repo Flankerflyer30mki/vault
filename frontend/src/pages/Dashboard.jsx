@@ -89,10 +89,10 @@ function Dashboard() {
         <Link className="button" to="/run">
           New backtest
         </Link>
-        <Link className="button" to="/compare">
+        <Link className="button secondary" to="/compare">
           Compare strategies
         </Link>
-        <Link className="button" to="/optimize">
+        <Link className="button secondary" to="/optimize">
           New optimization
         </Link>
         <Link className="button secondary" to="/strategies">
