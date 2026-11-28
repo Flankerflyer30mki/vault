@@ -1,5 +1,18 @@
-import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import {
+  FlaskConical,
+  GitCompare,
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  Play,
+  SlidersHorizontal,
+  Sun,
+  UserRound,
+  Workflow,
+} from "lucide-react";
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AuthProvider, GuestOnly, RequireAuth, useAuth } from "./auth";
+import { useTheme } from "./theme";
 import Account from "./pages/Account";
 import { ForgotPassword, Login, ResetPassword, Signup, VerifyEmail } from "./pages/Auth";
 import ComparisonTrigger from "./pages/ComparisonTrigger";
@@ -15,34 +28,117 @@ import StrategyBuilder from "./pages/StrategyBuilder";
 import StrategyList from "./pages/StrategyList";
 import "./App.css";
 
-function Nav() {
+const NAV = [
+  {
+    label: "Workspace",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/strategies", label: "Strategies", icon: Workflow },
+      { to: "/run", label: "New backtest", icon: Play },
+    ],
+  },
+  {
+    label: "Experiments",
+    items: [
+      { to: "/compare", label: "Compare", icon: GitCompare },
+      { to: "/optimize", label: "Optimize", icon: SlidersHorizontal },
+      { to: "/research", label: "AI research", icon: FlaskConical },
+    ],
+  },
+];
+
+function Brand() {
+  return (
+    <Link to="/" className="brand">
+      <span className="brand-mark" aria-hidden="true">
+        V
+      </span>
+      Vault
+    </Link>
+  );
+}
+
+function ThemeToggle({ asNavItem = false }) {
+  const [theme, toggle] = useTheme();
+  const Icon = theme === "dark" ? Sun : Moon;
+  const label = theme === "dark" ? "Light theme" : "Dark theme";
+  if (asNavItem) {
+    return (
+      <button type="button" className="nav-item" onClick={toggle} title={label}>
+        <Icon size={15} aria-hidden="true" />
+        <span className="foot-text">{label}</span>
+      </button>
+    );
+  }
+  return (
+    <button type="button" className="theme-toggle" onClick={toggle} aria-label={label} title={label}>
+      <Icon size={16} aria-hidden="true" />
+    </button>
+  );
+}
+
+function Sidebar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   return (
-    <nav className="navbar">
-      <h2>
-        <Link to="/">Vault</Link>
-      </h2>
-      {user && (
-        <>
-          <NavLink to="/" end>
-            Dashboard
-          </NavLink>
-          <NavLink to="/strategies">Strategies</NavLink>
-          <NavLink to="/run">New Backtest</NavLink>
-          <NavLink to="/compare">Compare</NavLink>
-          <NavLink to="/optimize">Optimize</NavLink>
-          <NavLink to="/research">Research</NavLink>
-          <span className="nav-spacer" />
-          <NavLink to="/account" className="nav-user">
-            {user.is_guest ? "Guest" : user.display_name || user.email}
-          </NavLink>
-          <button type="button" className="link-button nav-logout" onClick={() => logout().then(() => navigate("/login"))}>
-            Sign out
-          </button>
-        </>
-      )}
-    </nav>
+    <aside className="sidebar">
+      <Brand />
+      <nav aria-label="Main" className="nav-groups">
+        {NAV.map((group) => (
+          <div key={group.label} className="nav-group">
+            <div className="nav-label">{group.label}</div>
+            {group.items.map(({ to, label, icon: Icon, end }) => (
+              <NavLink key={to} to={to} end={end} className="nav-item">
+                <Icon size={15} aria-hidden="true" />
+                {label}
+              </NavLink>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="sidebar-foot">
+        <NavLink to="/account" className="nav-item nav-user" title="Account">
+          <UserRound size={15} aria-hidden="true" />
+          <span className="foot-text">{user.is_guest ? "Guest" : user.display_name || user.email}</span>
+        </NavLink>
+        <ThemeToggle asNavItem />
+        <button
+          type="button"
+          className="nav-item"
+          title="Sign out"
+          onClick={() => logout().then(() => navigate("/login"))}
+        >
+          <LogOut size={15} aria-hidden="true" />
+          <span className="foot-text">Sign out</span>
+        </button>
+        <div className="sidebar-links">
+          <Link to="/privacy">Privacy</Link>
+          <a href="https://github.com/Flankerflyer30mki/vault" target="_blank" rel="noreferrer">
+            Source
+          </a>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Topbar() {
+  return (
+    <header className="topbar">
+      <Brand />
+      <ThemeToggle />
+    </header>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="site-footer">
+      <Link to="/privacy">Privacy</Link> ·{" "}
+      <a href="https://github.com/Flankerflyer30mki/vault" target="_blank" rel="noreferrer">
+        Source
+      </a>
+    </footer>
   );
 }
 
@@ -72,13 +168,51 @@ function Banner() {
 const page = (el) => <RequireAuth>{el}</RequireAuth>;
 const open = (el) => <GuestOnly>{el}</GuestOnly>;
 
+// Signed in: sidebar + page. Signed out (or still loading): a slim top bar over centred content.
+function Shell({ children }) {
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+  const content = (
+    <main className="content" key={pathname}>
+      {children}
+    </main>
+  );
+  if (user === undefined) {
+    // Asking /api/auth/me/; on a cold server this can take a while, so say so quietly instead of flashing a layout.
+    return (
+      <div className="boot">
+        <span className="brand-mark" aria-hidden="true">
+          V
+        </span>
+        <p className="hint">Loading…</p>
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <div className="main">
+        <Topbar />
+        {content}
+        <Footer />
+      </div>
+    );
+  }
+  return (
+    <div className="shell">
+      <Sidebar />
+      <div className="main">
+        <Banner />
+        {content}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Nav />
-        <Banner />
-        <div className="content">
+        <Shell>
           <Routes>
             <Route path="/login" element={open(<Login />)} />
             <Route path="/signup" element={open(<Signup />)} />
@@ -100,13 +234,7 @@ function App() {
             <Route path="/research" element={page(<Research />)} />
             <Route path="/research/:id" element={page(<ResearchDetail />)} />
           </Routes>
-        </div>
-        <footer className="site-footer">
-          <Link to="/privacy">Privacy</Link> ·{" "}
-          <a href="https://github.com/Flankerflyer30mki/vault" target="_blank" rel="noreferrer">
-            Source
-          </a>
-        </footer>
+        </Shell>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -889,3 +889,17 @@ Starting point: `main` was v1, live on Vercel (`vault-lovat-beta.vercel.app`) an
   - Off without `GOOGLE_CLIENT_ID` (button hidden, endpoint 400), like the AI features.
 - **Alternatives:** an email API over HTTPS (Brevo; still possible later for password users); Supabase Auth or own JWT
   auth (a rewrite of Phase 1 that doesn't deliver email either).
+
+## D-104 · UI redesign: design tokens over a component framework
+- **Context:** the UI was ~1,000 lines of hand-written CSS with raw colours, on top of Vite's template stylesheet
+  (`#root { text-align: center }`, 56 px headings, a light palette under dark components). Text was centred, buttons
+  grey, and the light/dark preference produced mixed palettes. References chosen for the redesign: Linear, Raycast and
+  Resend (near-monochrome, hairline borders, one accent, short transitions, keyboard-first).
+- **Decision:** a token-based stylesheet (`index.css`: colours, radii, timings, fonts as CSS variables; `App.css`:
+  components that only use tokens) applied to the existing class names, so every page changes at once and markup
+  changes stay small. Dark is the default; a light theme is a `data-theme` attribute, remembered per browser and
+  applied before first paint. Inter and JetBrains Mono are self-hosted (`@fontsource`), so no request goes to Google
+  Fonts. Icons: `lucide-react`. The redesign ships in six PRs (foundation, lists, run results, builder, experiments and
+  research, polish with a `Ctrl+K` palette) so the site works after each merge.
+- **Alternatives:** Tailwind + shadcn/ui (rewrite every page's markup before anything improves; worth revisiting if
+  pages need many new interactive components); a CSS-in-JS library (runtime cost, no benefit here).

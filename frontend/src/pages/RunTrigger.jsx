@@ -10,8 +10,8 @@ const NUMERIC = [
   ["starting_cash", "Starting cash (in the symbol's currency)", "1", 100, 10000000],
   ["max_position_pct", "Max Position (fraction of cash, 0.01–1)", "0.01", 0.01, 1],
   ["slippage_pct", "Slippage per fill (0.0005 = 0.05%)", "0.0001", 0, 0.05],
-  ["stop_loss_pct", "Stop Loss (0.08 = 8%, blank = none)", "0.01", 0.001, 0.99],
-  ["take_profit_pct", "Take Profit (0.15 = 15%, blank = none)", "0.01", 0.001, 10],
+  ["stop_loss_pct", "Stop loss (0.08 = 8%, blank = none)", "0.001", 0.001, 0.99],
+  ["take_profit_pct", "Take profit (0.15 = 15%, blank = none)", "0.001", 0.001, 10],
 ];
 
 function RunTrigger() {
@@ -29,8 +29,8 @@ function RunTrigger() {
     cost_model: "flat",
     commission_pct: "0.001",
     slippage_pct: "0.0005",
-    stop_loss_pct: "0.08",
-    take_profit_pct: "0.15",
+    stop_loss_pct: "", // optional: blank = no stop
+    take_profit_pct: "", // optional: blank = no target
   });
   const [catalog, setCatalog] = useState(null);
 
